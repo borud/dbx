@@ -22,7 +22,7 @@ db, err := dbx.Open(
  )
 ```
 
-In the above example we use an embedded filesystem for migrations.  If you want to do migrations from the filesystem you can replace
+In the above example we use an embedded filesystem `migrationsFS` for migrations.  If you want to do migrations from the filesystem you can replace
 
 ```go
 dbx.WithMigrations(migrationsFS, "testmigrations"),
@@ -35,6 +35,20 @@ dbx.WithMigrations(os.DirFS("testmigrations"), "."),
 ```
 
 Which will do the same thing.
+
+## Schema
+
+Rather than a fixed single schema file we use migrations.  Typically you would want to put the migration files in a subdir and include them using an embedded filesystem.
+
+If you look in the tests you have this line:
+
+```go
+//go:embed testmigrations/*.sql
+var migrationsFS embed.FS
+```
+
+Then in the `testmigrations` subdirectory you have your migration SQL files.  Like `testmigrations/0001_init.up.sql`.
+
 
 ## Pragmas
 
