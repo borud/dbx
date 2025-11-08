@@ -11,6 +11,10 @@ The primary tool provided here is for opening databases and applying migrations.
 You can use this to open databases like so:
 
 ```go
+import (
+    "github.com/borud/dbx"
+)
+
 db, err := dbx.Open(
     dbx.WithDSN(":memory:"),
     dbx.WithDriver("sqlite"),
