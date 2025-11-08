@@ -129,11 +129,10 @@ RowsIter ranges over rows and StructScan's into T, which must be a struct that h
 type record struct {
     ID   int64  `db:"id"`
     Name string `db:"name"`
-    
 }
 
 // then we query the table
-rows, err := db.QueryxContext(ctx, "SELECT id, name FROM person")
+rows, err := db.QueryxContext(ctx, "SELECT * FROM person")
 if err != nil {
     return err
 }
