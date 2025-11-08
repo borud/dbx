@@ -15,10 +15,10 @@ db, err := dbx.Open(
     dbx.WithDSN(":memory:"),
     dbx.WithDriver("sqlite"),
     dbx.WithMigrations(migrationsFS, "testmigrations"),
-    dbx.WithMigrationDriver("sqlite", func(db *sql.DB) (database.Driver, string, error) {
-       d, err := sqlite3.WithInstance(db, &sqlite3.Config{})
-       return d, "sqlite3", err
-    }),
+    dbx.WithMigrationDriver("sqlite", "sqlite3",
+        func(db *sql.DB) (database.Driver, error) {
+            return sqlite3.WithInstance(db, &sqlite3.Config{})
+        }),
  )
 ```
 
