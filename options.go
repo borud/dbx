@@ -44,9 +44,12 @@ func WithDSN(dsn string) Option {
 
 // WithMigrationDriver is provided in case you want to use SQL databases beyond
 // those provided in the default config.
-func WithMigrationDriver(driverName string, f func(*sql.DB) (database.Driver, string, error)) Option {
+func WithMigrationDriver(sqlDriverName string, migrateName string, create func(*sql.DB) (database.Driver, error)) Option {
 	return func(c *config) error {
-		c.migrationDrivers[driverName] = f
+		c.migrationDrivers[sqlDriverName] = func(db *sql.DB) (database.Driver, string, error) {
+			d, err := create(db)
+			return d, migrateName, err
+		}
 		return nil
 	}
 }
