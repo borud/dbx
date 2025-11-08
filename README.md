@@ -65,31 +65,36 @@ import (
 )
 ```
 
-Here are some options for various databases:
+Here are some options for various databases.  You can probably figure out how this works for any database the library supports that isn't in an example below:
 
 ```go
 dbx.WithMigrationDriver("sqlite", "sqlite3",
    func(db *sql.DB) (database.Driver, error) {
-    return sqlite3.WithInstance(db, &sqlite3.Config{})
+      return sqlite3.WithInstance(db, &sqlite3.Config{})
    }),
-  dbx.WithMigrationDriver("sqlite3", "sqlite3",
+
+dbx.WithMigrationDriver("sqlite3", "sqlite3",
    func(db *sql.DB) (database.Driver, error) {
-    return sqlite3.WithInstance(db, &sqlite3.Config{})
+      return sqlite3.WithInstance(db, &sqlite3.Config{})
    }),
-  dbx.WithMigrationDriver("postgres", "postgres",
+
+dbx.WithMigrationDriver("postgres", "postgres",
    func(db *sql.DB) (database.Driver, error) {
-    return pg.WithInstance(db, &pg.Config{})
+      return pg.WithInstance(db, &pg.Config{})
    }),
-  dbx.WithMigrationDriver("pgx", "postgres",
+
+dbx.WithMigrationDriver("pgx", "postgres",
    func(db *sql.DB) (database.Driver, error) {
-    return pg.WithInstance(db, &pg.Config{})
+      return pg.WithInstance(db, &pg.Config{})
    }),
-  dbx.WithMigrationDriver("mysql", "mysql",
+
+dbx.WithMigrationDriver("mysql", "mysql",
    func(db *sql.DB) (database.Driver, error) {
-    return mysql.WithInstance(db, &mysql.Config{})
+      return mysql.WithInstance(db, &mysql.Config{})
    }),
-  dbx.WithMigrationDriver("sqlserver", "sqlserver",
+
+dbx.WithMigrationDriver("sqlserver", "sqlserver",
    func(db *sql.DB) (database.Driver, error) {
-    return sqlserver.WithInstance(db, &sqlserver.Config{})
+      return sqlserver.WithInstance(db, &sqlserver.Config{})
    }),
 ```
