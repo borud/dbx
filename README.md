@@ -127,8 +127,9 @@ RowsIter ranges over rows and StructScan's into T, which must be a struct that h
 ```go
 // let's say we have a table that matches this record
 type record struct {
+    ID   int64  `db:"id"`
     Name string `db:"name"`
-    TS   int64  `db:"ts"`
+    
 }
 
 // then we query the table
