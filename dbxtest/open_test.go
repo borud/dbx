@@ -40,6 +40,8 @@ func TestOpenFSMigrations(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.NotNil(t, db)
+
+	require.NoError(t, db.Close())
 }
 
 // TestOpenFilesystemMigrations shows how we can load migrations from the
@@ -56,6 +58,8 @@ func TestOpenFilesystemMigrations(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.NotNil(t, db)
+
+	require.NoError(t, db.Close())
 }
 
 // TestNoMigrationDrivers tests that we fail if we have `WithMigrations` but
@@ -103,4 +107,6 @@ func TestMigrationDrivers(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.NotNil(t, db)
+
+	require.NoError(t, db.Close())
 }
