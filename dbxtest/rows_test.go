@@ -19,7 +19,7 @@ type record struct {
 }
 
 func TestRowsIter(t *testing.T) {
-	db, err := dbx.Open(
+	db, err := dbx.OpenSQLX(
 		dbx.WithDSN(":memory:"),
 		dbx.WithDriver("sqlite"),
 		dbx.WithMigrations(migrationsFS, "testmigrations"),
@@ -96,7 +96,7 @@ func TestRowsIter(t *testing.T) {
 }
 
 func BenchmarkRowIter(b *testing.B) {
-	db, err := dbx.Open(
+	db, err := dbx.OpenSQLX(
 		dbx.WithDSN(":memory:"),
 		dbx.WithDriver("sqlite"),
 		dbx.WithPragmas([]string{

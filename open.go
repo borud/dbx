@@ -2,6 +2,7 @@
 package dbx
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -19,8 +20,25 @@ var (
 	ErrNoMigrationDrivers = errors.New("no migration drivers registered")
 )
 
+// OpenSQLX is a wrapper for Open that returns an *sqlx.DB rather than sql.DB
+func OpenSQLX(opts ...Option) (*sqlx.DB, error) {
+	// this is a bit suboptimal, but we need to do it to get the driverName
+	config := defaultConfig()
+	for _, opt := range opts {
+		if err := opt(&config); err != nil {
+			return nil, err
+		}
+	}
+
+	db, err := Open(opts...)
+	if err != nil {
+		return nil, err
+	}
+	return sqlx.NewDb(db, config.driverName), nil
+}
+
 // Open is a helper for opening a database and possibly applying pragmas, migrations etc.
-func Open(opts ...Option) (*sqlx.DB, error) {
+func Open(opts ...Option) (*sql.DB, error) {
 	config := defaultConfig()
 
 	for _, opt := range opts {
@@ -37,7 +55,7 @@ func Open(opts ...Option) (*sqlx.DB, error) {
 		return nil, ErrNoMigrationDrivers
 	}
 
-	db, err := sqlx.Open(config.driverName, config.dsn)
+	db, err := sql.Open(config.driverName, config.dsn)
 	if err != nil {
 		return nil, err
 	}
@@ -69,20 +87,20 @@ func Open(opts ...Option) (*sqlx.DB, error) {
 }
 
 // upMigrations applies any up migrations that need to be performed
-func upMigrations(db *sqlx.DB, config config) (uint, bool, error) {
+func upMigrations(db *sql.DB, config config) (uint, bool, error) {
 	src, err := iofs.New(config.migrations, config.migrationsPath)
 	if err != nil {
 		return 0, false, fmt.Errorf("iofs: %w", err)
 	}
 
-	f, ok := config.migrationDrivers[db.DriverName()]
+	f, ok := config.migrationDrivers[config.driverName]
 	if !ok {
-		return 0, false, fmt.Errorf("no migrate driver function registered for sql driver %q", db.DriverName())
+		return 0, false, fmt.Errorf("no migrate driver function registered for sql driver %q", config.driverName)
 	}
 
-	dbDrv, drvName, err := f(db.DB)
+	dbDrv, drvName, err := f(db)
 	if err != nil {
-		return 0, false, fmt.Errorf("%s driver: %w", db.DriverName(), err)
+		return 0, false, fmt.Errorf("%s driver: %w", config.driverName, err)
 	}
 
 	m, err := migrate.NewWithInstance("iofs", src, drvName, dbDrv)
