@@ -36,7 +36,7 @@ dbx.WithMigrations(os.DirFS("testmigrations"), "."),
 
 Which will do the same thing.
 
-## Schema
+### Schema
 
 Rather than a fixed single schema file we use migrations.  Typically you would want to put the migration files in a subdir and include them using an embedded filesystem.
 
@@ -49,8 +49,7 @@ var migrationsFS embed.FS
 
 Then in the `testmigrations` subdirectory you have your migration SQL files.  Like `testmigrations/0001_init.up.sql`.
 
-
-## Pragmas
+### Pragmas
 
 Adding pragmas can be done using the `WithPragmas` option:
 
@@ -64,7 +63,7 @@ dbx.WithPragmas([]string{
   }),
 ```
 
-## Migration database drivers
+### Migration database drivers
 
 The migration library I use ([github.com/golang-migrate/migrate](github.com/golang-migrate/migrate)) has support for a bunch of databases.  In order to avoid dependency on a particular version of the database libraries involved I have opted to add a `WithMigrationDriver` config option that provides the driver mapping for migrations.  If you are using other databases you have to add the appropriate `WithMigrationDriver` config option for your database(s).
 
@@ -111,4 +110,35 @@ dbx.WithMigrationDriver("sqlserver", "sqlserver",
    func(db *sql.DB) (database.Driver, error) {
       return sqlserver.WithInstance(db, &sqlserver.Config{})
    }),
+```
+
+## RowIter
+
+The `RowsIter` type implements an iterator that we can `range` over.  This is particularly useful when streaming a large result set to a client since we do not need to slurp the entire result set into memory before returning it.
+
+To stop iteration you just cancel the context.
+
+RowsIter ranges over rows and StructScan's into T, which must be a struct that has the appropriate struct tags for the fields.
+
+```go
+// let's say we have a table that matches this record
+type record struct {
+    Name string `db:"name"`
+    TS   int64  `db:"ts"`
+}
+
+// then we query the table
+rows, err := db.QueryxContext(ctx, "SELECT id, name FROM person")
+if err != nil {
+    return err
+}
+
+// and then iterate over the rows.  If we get an error we break out of the loop
+// and the `rec` will have the zero value for that type.
+for rec, err := range dbx.RowsIter[record](ctx, rows) {
+    if err != nil {
+      break // or handle error
+    }
+    doSomethingWith(rec)
+}
 ```

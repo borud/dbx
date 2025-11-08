@@ -28,8 +28,7 @@ var (
 //	}
 //
 // T must be a struct type with matching field names or `db:"col"` tags. If the
-// loop breaks early, rows are still closed via defer. Check Err() after the
-// loop to capture scan/iteration errors.
+// loop breaks early, rows are still closed via defer.
 //
 // This function is useful in cases where we stream the result of a query
 // rather than slurp everything into memory before responding to client.  It is
