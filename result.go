@@ -1,0 +1,36 @@
+package dbx
+
+import "database/sql"
+
+// Result holds the outcome of a mutating operation
+type Result struct {
+	lastInsertID *int64
+	rowsAffected *int64
+}
+
+// LastInsertID returns the last insert ID if available
+func (r Result) LastInsertID() (int64, bool) {
+	if r.lastInsertID == nil {
+		return 0, false
+	}
+	return *r.lastInsertID, true
+}
+
+// RowsAffected returns the number of rows affected if available
+func (r Result) RowsAffected() (int64, bool) {
+	if r.rowsAffected == nil {
+		return 0, false
+	}
+	return *r.rowsAffected, true
+}
+
+func newResult(sqlResult sql.Result) Result {
+	r := Result{}
+	if id, err := sqlResult.LastInsertId(); err == nil {
+		r.lastInsertID = &id
+	}
+	if n, err := sqlResult.RowsAffected(); err == nil {
+		r.rowsAffected = &n
+	}
+	return r
+}

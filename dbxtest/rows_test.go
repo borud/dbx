@@ -13,11 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type record struct {
-	Name string `db:"name"`
-	TS   int64  `db:"ts"`
-}
-
 func TestRowsIter(t *testing.T) {
 	db, err := dbx.OpenSQLX(
 		dbx.WithDSN(":memory:"),
