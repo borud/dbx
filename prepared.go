@@ -8,14 +8,53 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-type NamedExecFunc[T any] func(ctx context.Context, entity T) (Result, error)
-type QueryRowxFunc[T any] func(ctx context.Context, entity T) (T, error)
-type SelectFunc[T any] func(ctx context.Context, args ...any) ([]T, error)
-type SelectIteratorFunc[T any] func(ctx context.Context, args ...any) (func(func(T, error) bool), error)
+// ExecFunc is useful for very simple operations like DELETE with positional arguments.
 type ExecFunc func(ctx context.Context, args ...any) error
 
-// NewNamedExecFunc creates a new prepared named exec function. This is suitable for
-// inserts with entity, updates etc.
+// NamedExecFunc is useful for create, update etc where you send an entity in and
+// just want a Result and error back.
+type NamedExecFunc[T any] func(ctx context.Context, entity T) (Result, error)
+
+// QueryRowxFunc is useful for queries that return one row and takes positional
+// arguments.  For instance get operations on a single row.
+type QueryRowxFunc[T any] func(ctx context.Context, args ...any) (T, error)
+
+// EntityQueryRowxFunc is useful for queries that take some entity and return
+// an entity of the same type.  For instance when using RETURNING in SQL
+// statement.
+type EntityQueryRowxFunc[T any] func(ctx context.Context, entity T) (T, error)
+
+// SelectFunc is useful for when you perform selects and you know the result set will
+// be small or at least bounded to acceptable size.
+type SelectFunc[T any] func(ctx context.Context, args ...any) ([]T, error)
+
+// QueryxIteratorFunc is useful for queries that return (poitentially) large
+// result sets and you want to be able to stream the result.
+type QueryxIteratorFunc[T any] func(ctx context.Context, args ...any) func(func(T, error) bool)
+
+// NewExecFunc creates an ExecFunc
+func NewExecFunc(db *sqlx.DB, stmt string) ExecFunc {
+	prepared, err := db.Preparex(stmt)
+	if err != nil {
+		panic(err)
+	}
+
+	return func(ctx context.Context, args ...any) error {
+		res, err := prepared.ExecContext(ctx, args...)
+		if err != nil {
+			return err
+		}
+
+		result := newResult(res)
+		if rows, ok := result.RowsAffected(); ok && rows == 0 {
+			return sql.ErrNoRows
+		}
+
+		return nil
+	}
+}
+
+// NewNamedExecFunc creates a new NamedExecFunc
 func NewNamedExecFunc[T any](db *sqlx.DB, stmt string) NamedExecFunc[T] {
 	prepared, err := db.PrepareNamed(stmt)
 	if err != nil {
@@ -37,9 +76,34 @@ func NewNamedExecFunc[T any](db *sqlx.DB, stmt string) NamedExecFunc[T] {
 	}
 }
 
-// NewQueryRowxFunc creates a new prepared named exec function. This
-// variant is suitable if you have a RETURNING clause in your statement.
+// NewQueryRowxFunc creates a new QueryRowxFunc
 func NewQueryRowxFunc[T any](db *sqlx.DB, stmt string) QueryRowxFunc[T] {
+	prepared, err := db.Preparex(stmt)
+	if err != nil {
+		panic(err)
+	}
+
+	var zero T
+
+	return func(ctx context.Context, args ...any) (T, error) {
+		row := prepared.QueryRowxContext(ctx, args...)
+		if row.Err() != nil {
+			return zero, fmt.Errorf("statement [%s]: %w", stmt, row.Err())
+		}
+
+		var result T
+		err := row.StructScan(&result)
+
+		if err != nil {
+			return zero, fmt.Errorf("failed StructScan [%s]: %w", stmt, err)
+		}
+
+		return result, nil
+	}
+}
+
+// NewEntityQueryRowxFunc creates a new EntityQueryRowxFunc
+func NewEntityQueryRowxFunc[T any](db *sqlx.DB, stmt string) EntityQueryRowxFunc[T] {
 	prepared, err := db.PrepareNamed(stmt)
 	if err != nil {
 		panic(err)
@@ -64,6 +128,7 @@ func NewQueryRowxFunc[T any](db *sqlx.DB, stmt string) QueryRowxFunc[T] {
 	}
 }
 
+// NewSelectFunc creates a new SelectFunc
 func NewSelectFunc[T any](db *sqlx.DB, stmt string) SelectFunc[T] {
 	prepared, err := db.Preparex(stmt)
 	if err != nil {
@@ -72,7 +137,7 @@ func NewSelectFunc[T any](db *sqlx.DB, stmt string) SelectFunc[T] {
 
 	return func(ctx context.Context, args ...any) ([]T, error) {
 		var entities []T
-		err := prepared.Select(&entities, args...)
+		err := prepared.SelectContext(ctx, &entities, args...)
 		if err != nil {
 			return nil, fmt.Errorf("statement [%s]: %w", stmt, err)
 		}
@@ -81,22 +146,25 @@ func NewSelectFunc[T any](db *sqlx.DB, stmt string) SelectFunc[T] {
 	}
 }
 
-func NewSelectIteratorFunc[T any](db *sqlx.DB, stmt string) SelectIteratorFunc[T] {
+// NewQueryxIteratorFunc creates a new QueryxIteratorFunc
+func NewQueryxIteratorFunc[T any](db *sqlx.DB, stmt string) QueryxIteratorFunc[T] {
 	prepared, err := db.Preparex(stmt)
 	if err != nil {
 		panic(err)
 	}
 
-	return func(ctx context.Context, args ...any) (func(func(T, error) bool), error) {
+	return func(ctx context.Context, args ...any) func(func(T, error) bool) {
 		rows, err := prepared.QueryxContext(ctx, args...)
-		if err != nil {
-			return nil, fmt.Errorf("statement [%s]: %w", stmt, err)
-		}
 
 		return func(yield func(T, error) bool) {
+			// Handle query error before iteration
+			if err != nil {
+				_ = yield(*new(T), fmt.Errorf("statement [%s]: %w", stmt, err))
+				return
+			}
+
 			defer rows.Close()
 
-			// Next respects context cancellation
 			for rows.Next() {
 				var entity T
 				if err := rows.StructScan(&entity); err != nil {
@@ -112,27 +180,6 @@ func NewSelectIteratorFunc[T any](db *sqlx.DB, stmt string) SelectIteratorFunc[T
 			if err := rows.Err(); err != nil {
 				_ = yield(*new(T), err)
 			}
-		}, nil
-	}
-}
-
-func NewExecFunc(db *sqlx.DB, stmt string) ExecFunc {
-	prepared, err := db.Preparex(stmt)
-	if err != nil {
-		panic(err)
-	}
-
-	return func(ctx context.Context, args ...any) error {
-		res, err := prepared.ExecContext(ctx, args...)
-		if err != nil {
-			return err
 		}
-
-		result := newResult(res)
-		if rows, ok := result.RowsAffected(); ok && rows == 0 {
-			return sql.ErrNoRows
-		}
-
-		return nil
 	}
 }

@@ -1,6 +1,6 @@
 module github.com/borud/dbx
 
-go 1.25.1
+go 1.24.5
 
 require (
 	github.com/golang-migrate/migrate/v4 v4.19.0
