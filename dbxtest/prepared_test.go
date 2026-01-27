@@ -31,10 +31,6 @@ func TestPrepared(t *testing.T) {
 		dbx.WithDSN(":memory:"),
 		dbx.WithDriver("sqlite"),
 		dbx.WithMigrations(migrationsFS, "testmigrations"),
-		dbx.WithMigrationDriver("sqlite", "sqlite3",
-			func(db *sql.DB) (database.Driver, error) {
-				return sqlite3.WithInstance(db, &sqlite3.Config{})
-			}),
 	)
 	require.NoError(t, err)
 	require.NotNil(t, db)
@@ -199,6 +195,7 @@ func TestQueryXRowsIterator(t *testing.T) {
 			// cancel after first row.  Depending on how much data is cached, this should
 			// terminate iteration after a few rows.  Usually 1-2 rows.
 			cancel()
+			time.Sleep(1 * time.Millisecond)
 
 			if errors.Is(err, context.Canceled) {
 				seenContextCanceled = true

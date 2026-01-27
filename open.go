@@ -15,9 +15,8 @@ import (
 
 // errors
 var (
-	ErrDatabaseTooNew     = errors.New("database may be newer than migrations available in this binary")
-	ErrNoDSN              = errors.New("no data source name given")
-	ErrNoMigrationDrivers = errors.New("no migration drivers registered")
+	ErrDatabaseTooNew = errors.New("database may be newer than migrations available in this binary")
+	ErrNoDSN          = errors.New("no data source name given")
 )
 
 // OpenSQLX is a wrapper for Open that returns an *sqlx.DB rather than sql.DB
@@ -49,10 +48,6 @@ func Open(opts ...Option) (*sql.DB, error) {
 
 	if config.dsn == "" {
 		return nil, ErrNoDSN
-	}
-
-	if config.migrations != nil && len(config.migrationDrivers) == 0 {
-		return nil, ErrNoMigrationDrivers
 	}
 
 	db, err := sql.Open(config.driverName, config.dsn)
@@ -93,14 +88,10 @@ func upMigrations(db *sql.DB, config config) (uint, bool, error) {
 		return 0, false, fmt.Errorf("iofs: %w", err)
 	}
 
-	f, ok := config.migrationDrivers[config.driverName]
-	if !ok {
-		return 0, false, fmt.Errorf("no migrate driver function registered for sql driver %q", config.driverName)
-	}
-
-	dbDrv, drvName, err := f(db)
+	// Get the migration driver for this database driver
+	dbDrv, drvName, err := config.getMigrationDriver(db)
 	if err != nil {
-		return 0, false, fmt.Errorf("%s driver: %w", config.driverName, err)
+		return 0, false, err
 	}
 
 	m, err := migrate.NewWithInstance("iofs", src, drvName, dbDrv)
