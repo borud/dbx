@@ -6,7 +6,6 @@ import (
 	"io/fs"
 
 	"github.com/golang-migrate/migrate/v4/database"
-	"github.com/golang-migrate/migrate/v4/database/mysql"
 	"github.com/golang-migrate/migrate/v4/database/pgx/v5"
 	"github.com/golang-migrate/migrate/v4/database/postgres"
 	"github.com/golang-migrate/migrate/v4/database/sqlite3"
@@ -51,10 +50,6 @@ func defaultConfig() config {
 			"pgx": func(db *sql.DB) (database.Driver, string, error) {
 				d, err := pgx.WithInstance(db, &pgx.Config{})
 				return d, "postgres", err
-			},
-			"mysql": func(db *sql.DB) (database.Driver, string, error) {
-				d, err := mysql.WithInstance(db, &mysql.Config{})
-				return d, "mysql", err
 			},
 		},
 	}

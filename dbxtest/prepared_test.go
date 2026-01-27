@@ -16,8 +16,8 @@ import (
 )
 
 type operations struct {
-	add dbx.NamedExecFunc[record]
-	// addRet    dbx.QueryRowxFunc[record]
+	add       dbx.NamedExecFunc[record]
+	addRet    dbx.EntityQueryRowxFunc[record]
 	get       dbx.QueryRowxFunc[record]
 	update    dbx.NamedExecFunc[record]
 	updateRet dbx.EntityQueryRowxFunc[record]
@@ -37,6 +37,7 @@ func TestPrepared(t *testing.T) {
 
 	ops := operations{
 		add:       dbx.NewNamedExecFunc[record](db, "INSERT INTO foo (name,ts) VALUES (:name,:ts)"),
+		addRet:    dbx.NewEntityQueryRowxFunc[record](db, "INSERT INTO foo (name,ts) VALUES (:name,:ts) RETURNING *"),
 		get:       dbx.NewQueryRowxFunc[record](db, "SELECT * FROM foo WHERE name = ?"),
 		update:    dbx.NewNamedExecFunc[record](db, "UPDATE foo SET ts = :ts WHERE name = :name"),
 		updateRet: dbx.NewEntityQueryRowxFunc[record](db, "UPDATE foo SET ts = :ts WHERE name = :name RETURNING *"),
@@ -52,6 +53,14 @@ func TestPrepared(t *testing.T) {
 	require.NoError(t, err)
 	lastID, _ := res.LastInsertID()
 	rowsAffected, _ := res.RowsAffected()
+
+	// addRet
+	r2, err := ops.addRet(context.Background(), record{
+		Name: "another name",
+		TS:   1234,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1234), r2.TS)
 
 	require.Equal(t, int64(1), lastID)
 	require.Equal(t, int64(1), rowsAffected)
@@ -96,7 +105,7 @@ func TestPrepared(t *testing.T) {
 	// simple read-all list operation
 	recs, err := ops.list(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, 20, len(recs))
+	require.Equal(t, 21, len(recs))
 
 	// iterator
 	ctx, cancel := context.WithCancel(context.Background())
