@@ -6,7 +6,7 @@ I mostly use [Jason Moiron's](https://github.com/jmoiron) [sqlx](https://github.
 
 ## Open
 
-The primary tool provided here is for opening databases and applying migrations.  Note that we do not bother with *down* migrations.  We only support *up* migrations.  You 
+The primary tool provided here is for opening databases and applying migrations.  Note that we do not bother with *down* migrations.  We only support *up* migrations.
 
 You can use this to open databases like so:
 
@@ -68,7 +68,7 @@ dbx.WithPragmas([]string{
 
 ### Migration database drivers
 
-The migration library I use ([github.com/golang-migrate/migrate](github.com/golang-migrate/migrate)) has support for a bunch of databases. We include a small set of drivers per default in the library purely as a convenience. But this does mean that we add dependencies you may not need. 
+The migration library I use ([github.com/golang-migrate/migrate](github.com/golang-migrate/migrate)) has support for a bunch of databases. We include a small set of drivers per default in the library purely as a convenience. But this does mean that we add dependencies you may not need.
 
 Since I'm the only user of this code for now I can live with that.
 
@@ -151,11 +151,32 @@ You can look at the [unit test](dbxtest/prepared_test.go) for prepared statement
 
 This type is particularly useful because it allows you to write very simple loops around queries that return possibly huge result sets.
 
+Assume you have a struct with pointers to your database operations
+
 ```go
+type Record struct {
+   // some record structure representing the fields in a table
+}
+
+type Storage struct {
+   List dbx.QueryxIteratorFunc[Record]
+}
+```
+
+Here's how you would instantiate the storage:
+
+```go
+operations := Storage{
+   List: dbx.NewQueryxIteratorFunc[record](db, "SELECT * FROM foo"),
+}
+```
+
+```go
+  // perhaps add a timeout
   ctx, cancel := context.WithTimeout(someCTX, 10*time.Millisecond)
   defer cancel()
 
-  for record, err := range operations.ListRecords {
+  for record, err := range operations.ListRecords(ctx) {
     // check err and do something with record
   }
 ```
