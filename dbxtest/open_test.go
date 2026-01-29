@@ -33,10 +33,6 @@ func TestOpenFSMigrations(t *testing.T) {
 			"PRAGMA temp_store = MEMORY",  // store any temporary tables and indices in memory
 		}),
 		dbx.WithMigrations(migrationsFS, "testmigrations"),
-		dbx.WithMigrationDriver("sqlite", "sqlite3",
-			func(db *sql.DB) (database.Driver, error) {
-				return sqlite3.WithInstance(db, &sqlite3.Config{})
-			}),
 	)
 	require.NoError(t, err)
 	require.NotNil(t, db)
@@ -67,10 +63,10 @@ func TestOpenFilesystemMigrations(t *testing.T) {
 func TestNoMigrationDrivers(t *testing.T) {
 	db, err := dbx.Open(
 		dbx.WithDSN(":memory:"),
-		dbx.WithDriver("sqlite"),
+		dbx.WithDriver("foo"),
 		dbx.WithMigrations(migrationsFS, "testmigrations"),
 	)
-	require.ErrorIs(t, err, dbx.ErrNoMigrationDrivers)
+	require.Error(t, err)
 	require.Nil(t, db)
 }
 

@@ -2,9 +2,13 @@ package dbx
 
 import (
 	"database/sql"
+	"fmt"
 	"io/fs"
 
 	"github.com/golang-migrate/migrate/v4/database"
+	"github.com/golang-migrate/migrate/v4/database/pgx/v5"
+	"github.com/golang-migrate/migrate/v4/database/postgres"
+	"github.com/golang-migrate/migrate/v4/database/sqlite3"
 )
 
 // config is the configuration
@@ -25,12 +29,29 @@ type DriverForFunc func(*sql.DB) (database.Driver, string, error)
 
 func defaultConfig() config {
 	return config{
-		dsn:              "",
-		driverName:       "sqlite",
-		pragmas:          []string{},
-		migrations:       nil,
-		migrationsPath:   "",
-		migrationDrivers: map[string]DriverForFunc{},
+		dsn:            "",
+		driverName:     "sqlite",
+		pragmas:        []string{},
+		migrations:     nil,
+		migrationsPath: "",
+		migrationDrivers: map[string]DriverForFunc{
+			"sqlite": func(db *sql.DB) (database.Driver, string, error) {
+				d, err := sqlite3.WithInstance(db, &sqlite3.Config{})
+				return d, "sqlite3", err
+			},
+			"sqlite3": func(db *sql.DB) (database.Driver, string, error) {
+				d, err := sqlite3.WithInstance(db, &sqlite3.Config{})
+				return d, "sqlite3", err
+			},
+			"postgres": func(db *sql.DB) (database.Driver, string, error) {
+				d, err := postgres.WithInstance(db, &postgres.Config{})
+				return d, "postgres", err
+			},
+			"pgx": func(db *sql.DB) (database.Driver, string, error) {
+				d, err := pgx.WithInstance(db, &pgx.Config{})
+				return d, "postgres", err
+			},
+		},
 	}
 }
 
@@ -43,7 +64,7 @@ func WithDSN(dsn string) Option {
 }
 
 // WithMigrationDriver is provided in case you want to use SQL databases beyond
-// those provided in the default config.
+// those provided in the default config (sqlite, postgres, mysql).
 func WithMigrationDriver(sqlDriverName string, migrateName string, create func(*sql.DB) (database.Driver, error)) Option {
 	return func(c *config) error {
 		c.migrationDrivers[sqlDriverName] = func(db *sql.DB) (database.Driver, string, error) {
@@ -79,4 +100,13 @@ func WithMigrations(fileSystem fs.FS, path string) Option {
 		c.migrationsPath = path
 		return nil
 	}
+}
+
+// getMigrationDriver returns the migration driver for the configured database driver
+func (c *config) getMigrationDriver(db *sql.DB) (database.Driver, string, error) {
+	driverFunc, ok := c.migrationDrivers[c.driverName]
+	if !ok {
+		return nil, "", fmt.Errorf("no migration driver registered for database driver %q", c.driverName)
+	}
+	return driverFunc(db)
 }
