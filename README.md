@@ -6,7 +6,7 @@ I mostly use [Jason Moiron's](https://github.com/jmoiron) [sqlx](https://github.
 
 ## Open
 
-The primary tool provided here is for opening databases and applying migrations.  Note that we do not bother with *down* migrations.  We only support *up* migrations.
+The primary tool provided here is for opening databases and applying migrations.  Note that we do not bother with *down* migrations.  We only support *up* migrations.  You 
 
 You can use this to open databases like so:
 
@@ -15,27 +15,26 @@ import (
     "github.com/borud/dbx"
 )
 
+//go:embed migrations/*.sql
+var migrationsFS embed.FS
+
 db, err := dbx.Open(
     dbx.WithDSN(":memory:"),
     dbx.WithDriver("sqlite"),
-    dbx.WithMigrations(migrationsFS, "testmigrations"),
-    dbx.WithMigrationDriver("sqlite", "sqlite3",
-        func(db *sql.DB) (database.Driver, error) {
-            return sqlite3.WithInstance(db, &sqlite3.Config{})
-        }),
+    dbx.WithMigrations(migrationsFS, "migrations"),
  )
 ```
 
 In the above example we use an embedded filesystem `migrationsFS` for migrations.  If you want to do migrations from the filesystem you can replace
 
 ```go
-dbx.WithMigrations(migrationsFS, "testmigrations"),
+dbx.WithMigrations(migrationsFS, "migrations"),
 ```
 
 with
 
 ```go
-dbx.WithMigrations(os.DirFS("testmigrations"), "."),
+dbx.WithMigrations(os.DirFS("migrations"), "."),
 ```
 
 Which will do the same thing.
@@ -44,14 +43,14 @@ Which will do the same thing.
 
 Rather than a fixed single schema file we use migrations.  Typically you would want to put the migration files in a subdir and include them using an embedded filesystem.
 
-If you look in the tests you have this line:
+Files have names that start with a number and may look something like this:
 
-```go
-//go:embed testmigrations/*.sql
-var migrationsFS embed.FS
-```
+- `testmigrations/0001_init.up.sql`
+- `testmigrations/0002_add_foo_field.up.sql`.
+- `testmigrations/0003_add_bar_table.up.sql`.
+- ...
 
-Then in the `testmigrations` subdirectory you have your migration SQL files.  Like `testmigrations/0001_init.up.sql`.
+etc
 
 ### Pragmas
 
@@ -69,80 +68,96 @@ dbx.WithPragmas([]string{
 
 ### Migration database drivers
 
-The migration library I use ([github.com/golang-migrate/migrate](github.com/golang-migrate/migrate)) has support for a bunch of databases.  In order to avoid dependency on a particular version of the database libraries involved I have opted to add a `WithMigrationDriver` config option that provides the driver mapping for migrations.  If you are using other databases you have to add the appropriate `WithMigrationDriver` config option for your database(s).
+The migration library I use ([github.com/golang-migrate/migrate](github.com/golang-migrate/migrate)) has support for a bunch of databases. We include a small set of drivers per default in the library purely as a convenience. But this does mean that we add dependencies you may not need. 
 
-The import statements you will need for various drivers are some subset of the drivers found under <https://github.com/golang-migrate/migrate/tree/master/database>:
+Since I'm the only user of this code for now I can live with that.
+
+If you want to use drivers that are not yet included here you can add those useing the `WithMigrationDriver` config option.  For instance if you want to add MySQL support:
 
 ```go
 import (
   mysql "github.com/golang-migrate/migrate/v4/database/mysql"
-  pg "github.com/golang-migrate/migrate/v4/database/postgres"
-  sqlserver "github.com/golang-migrate/migrate/v4/database/sqlserver"
-  sqlite3 "github.com/golang-migrate/migrate/v4/database/sqlite3"
 )
 ```
 
-Here are some options for various databases.  You can probably figure out how this works for any database the library supports that isn't in an example below:
+and then you add the driver explicitly with
 
 ```go
-dbx.WithMigrationDriver("sqlite", "sqlite3",
-   func(db *sql.DB) (database.Driver, error) {
-      return sqlite3.WithInstance(db, &sqlite3.Config{})
-   }),
-
-dbx.WithMigrationDriver("sqlite3", "sqlite3",
-   func(db *sql.DB) (database.Driver, error) {
-      return sqlite3.WithInstance(db, &sqlite3.Config{})
-   }),
-
-dbx.WithMigrationDriver("postgres", "postgres",
-   func(db *sql.DB) (database.Driver, error) {
-      return pg.WithInstance(db, &pg.Config{})
-   }),
-
-dbx.WithMigrationDriver("pgx", "postgres",
-   func(db *sql.DB) (database.Driver, error) {
-      return pg.WithInstance(db, &pg.Config{})
-   }),
-
 dbx.WithMigrationDriver("mysql", "mysql",
    func(db *sql.DB) (database.Driver, error) {
       return mysql.WithInstance(db, &mysql.Config{})
    }),
-
-dbx.WithMigrationDriver("sqlserver", "sqlserver",
-   func(db *sql.DB) (database.Driver, error) {
-      return sqlserver.WithInstance(db, &sqlserver.Config{})
-   }),
 ```
 
-## RowIter
+## Prepared statements
 
-The `RowsIter` type implements an iterator that we can `range` over.  This is particularly useful when streaming a large result set to a client since we do not need to slurp the entire result set into memory before returning it.
+This library includes a mechanism for dealing with prepared statements that makes life a bit easier.  It uses generics and a set of function types that you can use for prepared statements.
 
-To stop iteration you just cancel the context.
-
-RowsIter ranges over rows and StructScan's into T, which must be a struct that has the appropriate struct tags for the fields.
+Here is an excerpt of the types from `prepared.go`.
 
 ```go
-// let's say we have a table that matches this record
-type record struct {
-    ID   int64  `db:"id"`
-    Name string `db:"name"`
-}
 
-// then we query the table
-rows, err := db.QueryxContext(ctx, "SELECT * FROM person")
-if err != nil {
-    return err
-}
+// ExecFunc is useful for very simple operations like DELETE with positional arguments.
+type ExecFunc func(ctx context.Context, args ...any) error
 
-// and then iterate over the rows.  If we get an error we break out of the loop
-// and the `rec` will have the zero value for that type.
-for rec, err := range dbx.RowsIter[record](ctx, rows) {
-    if err != nil {
-      break // or handle error
-    }
-    doSomethingWith(rec)
-}
+// NamedExecFunc is useful for create, update etc where you send an entity in and
+// just want a Result and error back.
+type NamedExecFunc[T any] func(ctx context.Context, entity T) (Result, error)
+
+// QueryRowxFunc is useful for queries that return one row and takes positional
+// arguments.  For instance get operations on a single row.
+type QueryRowxFunc[T any] func(ctx context.Context, args ...any) (T, error)
+
+// EntityQueryRowxFunc is useful for queries that take some entity and return
+// an entity of the same type.  For instance when using RETURNING in SQL
+// statement.
+type EntityQueryRowxFunc[T any] func(ctx context.Context, entity T) (T, error)
+
+// SelectFunc is useful for when you perform selects and you know the result set will
+// be small or at least bounded to acceptable size.
+type SelectFunc[T any] func(ctx context.Context, args ...any) ([]T, error)
+
+// QueryxIteratorFunc is useful for queries that return (poitentially) large
+// result sets and you want to be able to stream the result.
+type QueryxIteratorFunc[T any] func(ctx context.Context, args ...any) func(func(T, error) bool)
 ```
+
+You can instantiate these with:
+
+```go
+
+// NewExecFunc creates an ExecFunc
+func NewExecFunc(db *sqlx.DB, stmt string) ExecFunc
+
+// NewNamedExecFunc creates a new NamedExecFunc
+func NewNamedExecFunc[T any](db *sqlx.DB, stmt string) NamedExecFunc[T]
+
+// NewQueryRowxFunc creates a new QueryRowxFunc
+func NewQueryRowxFunc[T any](db *sqlx.DB, stmt string) QueryRowxFunc[T]
+
+// NewEntityQueryRowxFunc creates a new EntityQueryRowxFunc
+func NewEntityQueryRowxFunc[T any](db *sqlx.DB, stmt string) 
+
+// NewSelectFunc creates a new SelectFunc
+func NewSelectFunc[T any](db *sqlx.DB, stmt string) SelectFunc[T]
+
+// NewQueryxIteratorFunc creates a new QueryxIteratorFunc
+func NewQueryxIteratorFunc[T any](db *sqlx.DB, stmt string) QueryxIteratorFunc
+```
+
+You can look at the [unit test](dbxtest/prepared_test.go) for prepared statements to see an example of how you can make structs that hold the functions that define your interface.
+
+### QueryxIteratorFunc
+
+This type is particularly useful because it allows you to write very simple loops around queries that return possibly huge result sets.
+
+```go
+  ctx, cancel := context.WithTimeout(someCTX, 10*time.Millisecond)
+  defer cancel()
+
+  for record, err := range operations.ListRecords {
+    // check err and do something with record
+  }
+```
+
+If `someCTX` comes from a HTTP call or a gRPC call, it will terminate the loop and return an error value if the context is cancelled.  This makes it easier to handle those queries that return a lot of rows without first slurping everything into memory before returning, but just stream entries as they are returned by the iterator.
