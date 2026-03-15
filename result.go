@@ -24,7 +24,9 @@ func (r Result) RowsAffected() (int64, bool) {
 	return *r.rowsAffected, true
 }
 
-func newResult(sqlResult sql.Result) Result {
+// NewResult wraps a sql.Result into a dbx.Result, extracting
+// LastInsertId and RowsAffected if available.
+func NewResult(sqlResult sql.Result) Result {
 	r := Result{}
 	if id, err := sqlResult.LastInsertId(); err == nil {
 		r.lastInsertID = &id
