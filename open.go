@@ -1,4 +1,3 @@
-// Package dbx implements a small set of rather opinionated utilities for dealing with databases.
 package dbx
 
 import (
