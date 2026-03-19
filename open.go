@@ -99,7 +99,7 @@ func upMigrations(db *sql.DB, config config) (uint, bool, error) {
 	}
 
 	// Run migrations. ErrNoChange is fine.
-	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
+	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		// capture dirty state for caller
 		if v, dirty, vErr := m.Version(); vErr == nil {
 			return v, dirty, err
@@ -108,7 +108,7 @@ func upMigrations(db *sql.DB, config config) (uint, bool, error) {
 	}
 
 	v, dirty, err := m.Version()
-	if err == migrate.ErrNilVersion {
+	if errors.Is(err, migrate.ErrNilVersion) {
 		// No migrations applied yet (empty dir): treat as version 0
 		return 0, false, nil
 	}

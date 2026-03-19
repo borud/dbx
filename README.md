@@ -288,3 +288,9 @@ dbx.WithPragmas(
 ### `ValidSQLIdentifier` rejects identifiers starting with a digit
 
 `ValidSQLIdentifier("123table")` now returns `false`. This aligns with standard SQL identifier rules. Table and column names passed to `NewPaginatedSelectFunc` must not start with a digit.
+
+### `NewNamedExecFunc` no longer returns `sql.ErrNoRows` on zero affected rows
+
+Previously, `NewNamedExecFunc` returned both a valid `Result` and `sql.ErrNoRows` when `RowsAffected == 0`. This was misleading because the operation succeeded — zero rows affected is a valid outcome for many statements. The `Result` is still returned and callers should check `result.RowsAffected()` to detect zero affected rows when needed.
+
+Note: `NewExecFunc` retains the `sql.ErrNoRows` behavior since it does not return a `Result`.

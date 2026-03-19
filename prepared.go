@@ -67,12 +67,7 @@ func NewNamedExecFunc[T any](db *sqlx.DB, stmt string) NamedExecFunc[T] {
 			return Result{}, fmt.Errorf("statement [%s]: %w", stmt, err)
 		}
 
-		result := NewResult(res)
-		if rows, ok := result.RowsAffected(); ok && rows == 0 {
-			return result, sql.ErrNoRows
-		}
-
-		return result, nil
+		return NewResult(res), nil
 	}
 }
 

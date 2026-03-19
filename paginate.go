@@ -2,11 +2,15 @@ package dbx
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 
 	"github.com/jmoiron/sqlx"
 )
+
+// ErrMutuallyExclusive is returned when both After and Before are set in a PageRequest.
+var ErrMutuallyExclusive = errors.New("after and before are mutually exclusive")
 
 // MaxPageSize is the upper bound on PageRequest.PageSize. Requests exceeding
 // this value are silently clamped.
@@ -92,7 +96,7 @@ func NewPaginatedSelectFunc[T any](db *sqlx.DB, table, orderCol, baseWhere strin
 
 	return func(ctx context.Context, page PageRequest, args ...any) ([]T, PageResponse, error) {
 		if page.After != "" && page.Before != "" {
-			return nil, PageResponse{}, fmt.Errorf("after and before are mutually exclusive")
+			return nil, PageResponse{}, ErrMutuallyExclusive
 		}
 		if page.PageSize > MaxPageSize {
 			page.PageSize = MaxPageSize
@@ -134,7 +138,7 @@ func NewPaginatedSelectFunc[T any](db *sqlx.DB, table, orderCol, baseWhere strin
 
 		var rows []T
 		if err := db.SelectContext(ctx, &rows, query, queryArgs...); err != nil {
-			return nil, PageResponse{}, err
+			return nil, PageResponse{}, fmt.Errorf("paginated select [%s]: %w", query, err)
 		}
 
 		var pr PageResponse
