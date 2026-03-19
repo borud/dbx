@@ -25,13 +25,12 @@ func TestOpenFSMigrations(t *testing.T) {
 	db, err := dbx.Open(
 		dbx.WithDSN(":memory:"),
 		dbx.WithDriver("sqlite"),
-		dbx.WithPragmas([]string{
+		dbx.WithPragmas(
 			"PRAGMA foreign_keys = ON",    // turn on foreign keys
 			"PRAGMA synchronous = NORMAL", // this is the appropriate setting for WAL
 			"PRAGMA secure_delete = OFF",  // we do not need to overwrite deleted data with zeroes
-			"PRAGMA synchronous = NORMAL", // this is the appropriate setting for WAL
 			"PRAGMA temp_store = MEMORY",  // store any temporary tables and indices in memory
-		}),
+		),
 		dbx.WithMigrations(migrationsFS, "testmigrations"),
 	)
 	require.NoError(t, err)

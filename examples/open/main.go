@@ -18,11 +18,11 @@ func main() {
 	db, err := dbx.Open(
 		dbx.WithDSN(":memory:"),
 		dbx.WithDriver("sqlite"),
-		dbx.WithPragmas([]string{
+		dbx.WithPragmas(
 			"PRAGMA foreign_keys = ON",
 			"PRAGMA synchronous = NORMAL",
 			"PRAGMA temp_store = MEMORY",
-		}),
+		),
 		dbx.WithMigrations(migrationsFS, "migrations"),
 	)
 	if err != nil {

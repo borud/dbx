@@ -64,7 +64,7 @@ func WithDSN(dsn string) Option {
 }
 
 // WithMigrationDriver is provided in case you want to use SQL databases beyond
-// those provided in the default config (sqlite, postgres, mysql).
+// those provided in the default config (sqlite, postgres).
 func WithMigrationDriver(sqlDriverName string, migrateName string, create func(*sql.DB) (database.Driver, error)) Option {
 	return func(c *config) error {
 		c.migrationDrivers[sqlDriverName] = func(db *sql.DB) (database.Driver, string, error) {
@@ -75,8 +75,10 @@ func WithMigrationDriver(sqlDriverName string, migrateName string, create func(*
 	}
 }
 
-// WithPragmas appends pragmas to the config
-func WithPragmas(pragmas []string) Option {
+// WithPragmas appends pragmas to the config.
+// Pragmas are executed as raw SQL statements during database opening, so they
+// must be trusted inputs — never pass user-controlled strings.
+func WithPragmas(pragmas ...string) Option {
 	return func(c *config) error {
 		c.pragmas = append(c.pragmas, pragmas...)
 		return nil

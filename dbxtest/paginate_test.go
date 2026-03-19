@@ -169,6 +169,7 @@ func TestValidSQLIdentifier(t *testing.T) {
 		{"users", true},
 		{"foo_bar", true},
 		{"col123", true},
+		{"123table", false},
 		{"", false},
 		{"foo bar", false},
 		{"foo;DROP", false},

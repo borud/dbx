@@ -1,184 +1,290 @@
-# DBX - A set of opinionated database utilities
+# DBX - Opinionated database utilities for Go
 
-This library is a somewhat opinionated set of database tools that are useful to me, and perhaps to you.  Its primary job is to make my life a bit easier when using databases the way I prefer to use them.
+[![Go Reference](https://pkg.go.dev/badge/github.com/borud/dbx.svg)](https://pkg.go.dev/github.com/borud/dbx)
 
-I mostly use [Jason Moiron's](https://github.com/jmoiron) [sqlx](https://github.com/jmoiron/sqlx) excellent library since it provides me with a good balance between convenience and flexibility.  I'm not fond of ORMs, but I am also not very fond of complicating database operations more than they need to be. The `sqlx` library provides a very good balance I think.
+Convenience layer on top of [sqlx](https://github.com/jmoiron/sqlx). No ORM — just prepared statements, migrations, and pagination.
 
-## Open
+## Table of contents
 
-The primary tool provided here is for opening databases and applying migrations.  Note that we do not bother with *down* migrations.  We only support *up* migrations.
+- [Opening a database](#opening-a-database)
+  - [Migration files](#migration-files)
+- [Prepared statements](#prepared-statements)
+  - [Example: CRUD operations](#example-crud-operations)
+  - [Streaming with QueryxIteratorFunc](#streaming-with-queryxiteratorfunc)
+  - [Result type](#result-type)
+- [Pagination](#pagination)
+  - [Setup](#setup)
+  - [Fetching pages](#fetching-pages)
+  - [PageRequest / PageResponse](#pagerequest--pageresponse)
+  - [Full pagination loop](#full-pagination-loop)
+- [Breaking changes in v1.0.0](#breaking-changes-in-v100)
 
-You can use this to open databases like so:
+## Opening a database
 
 ```go
-import (
-    "github.com/borud/dbx"
-)
+import "github.com/borud/dbx"
 
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
 
+// Returns *sqlx.DB
+db, err := dbx.OpenSQLX(
+    dbx.WithDSN(":memory:"),
+    dbx.WithDriver("sqlite"),
+    dbx.WithMigrations(migrationsFS, "migrations"),
+)
+
+// Returns *sql.DB
 db, err := dbx.Open(
     dbx.WithDSN(":memory:"),
     dbx.WithDriver("sqlite"),
     dbx.WithMigrations(migrationsFS, "migrations"),
- )
+)
 ```
 
-In the above example we use an embedded filesystem `migrationsFS` for migrations.  If you want to do migrations from the filesystem you can replace
+**Filesystem migrations** (instead of embedded):
 
 ```go
-dbx.WithMigrations(migrationsFS, "migrations"),
+dbx.WithMigrations(os.DirFS("migrations"), ".")
 ```
 
-with
+**Pragmas:**
 
 ```go
-dbx.WithMigrations(os.DirFS("migrations"), "."),
+dbx.WithPragmas(
+    "PRAGMA foreign_keys = ON",
+    "PRAGMA synchronous = NORMAL",
+)
 ```
 
-Which will do the same thing.
+**Custom migration driver** (e.g. MySQL):
 
-### Schema
+```go
+import mysql "github.com/golang-migrate/migrate/v4/database/mysql"
 
-Rather than a fixed single schema file we use migrations.  Typically you would want to put the migration files in a subdir and include them using an embedded filesystem.
+dbx.WithMigrationDriver("mysql", "mysql",
+    func(db *sql.DB) (database.Driver, error) {
+        return mysql.WithInstance(db, &mysql.Config{})
+    }),
+```
 
-Files have names that start with a number and may look something like this:
+### Migration files
 
-- `testmigrations/0001_init.up.sql`
-- `testmigrations/0002_add_foo_field.up.sql`.
-- `testmigrations/0003_add_bar_table.up.sql`.
-- ...
+Numbered SQL files in a directory:
 
-etc
+```
+migrations/0001_init.up.sql
+migrations/0002_add_foo_field.up.sql
+migrations/0003_add_bar_table.up.sql
+```text
+migrations/0001_init.up.sql
+migrations/0002_add_foo_field.up.sql
+migrations/0003_add_bar_table.up.sql
+```
 
-### Pragmas
+Only *up* migrations are supported.
 
-Adding pragmas can be done using the `WithPragmas` option:
+## Prepared statements
+
+Function types that wrap prepared statements with generics:
+
+| Type                       | Use case                                       | Constructor                  |
+|----------------------------|-------------------------------------------------|------------------------------|
+| `ExecFunc`                 | Simple ops (DELETE, etc.) with positional args   | `NewExecFunc`                |
+| `NamedExecFunc[T]`         | INSERT/UPDATE with a struct, returns `Result`    | `NewNamedExecFunc[T]`        |
+| `QueryRowxFunc[T]`         | Single-row query with positional args            | `NewQueryRowxFunc[T]`        |
+| `EntityQueryRowxFunc[T]`   | Struct in, struct out (e.g. `RETURNING *`)       | `NewEntityQueryRowxFunc[T]`  |
+| `SelectFunc[T]`            | Bounded result sets                              | `NewSelectFunc[T]`           |
+| `QueryxIteratorFunc[T]`    | Streaming large result sets via range iterator   | `NewQueryxIteratorFunc[T]`   |
+| `PaginatedSelectFunc[T]`   | Cursor-based paginated SELECT (see [Pagination](#pagination)) | `NewPaginatedSelectFunc[T]`  |
+
+**Note:** `NewPaginatedSelectFunc` constructs SQL from its `table`, `orderCol`, and `baseWhere` arguments. The table and column names are interpolated directly into queries — they are validated as safe SQL identifiers (ASCII letters, digits, underscores only) and the constructor panics on invalid input. The `baseWhere` clause is passed through as-is, so use `?` placeholders for any user-supplied values.
+
+### Example: CRUD operations
+
+```go
+type Record struct {
+    Name string `db:"name"`
+    TS   int64  `db:"ts"`
+}
+
+// Define your storage interface as function fields
+type Storage struct {
+    Add    dbx.NamedExecFunc[Record]
+    AddRet dbx.EntityQueryRowxFunc[Record]
+    Get    dbx.QueryRowxFunc[Record]
+    Update dbx.NamedExecFunc[Record]
+    Delete dbx.ExecFunc
+    List   dbx.SelectFunc[Record]
+}
+
+// Wire up
+ops := Storage{
+    Add:    dbx.NewNamedExecFunc[Record](db, "INSERT INTO foo (name,ts) VALUES (:name,:ts)"),
+    AddRet: dbx.NewEntityQueryRowxFunc[Record](db, "INSERT INTO foo (name,ts) VALUES (:name,:ts) RETURNING *"),
+    Get:    dbx.NewQueryRowxFunc[Record](db, "SELECT * FROM foo WHERE name = ?"),
+    Update: dbx.NewNamedExecFunc[Record](db, "UPDATE foo SET ts = :ts WHERE name = :name"),
+    Delete: dbx.NewExecFunc(db, "DELETE FROM foo WHERE name = ?"),
+    List:   dbx.NewSelectFunc[Record](db, "SELECT * FROM foo ORDER BY ts ASC"),
+}
+
+// Insert
+res, err := ops.Add(ctx, Record{Name: "alice", TS: 1})
+lastID, _ := res.LastInsertID()
+
+// Insert with RETURNING
+rec, err := ops.AddRet(ctx, Record{Name: "bob", TS: 2})
+
+// Get
+rec, err := ops.Get(ctx, "alice")
+
+// Update
+res, err := ops.Update(ctx, Record{Name: "alice", TS: 99})
+
+// Delete
+err := ops.Delete(ctx, "alice")
+
+// List all
+records, err := ops.List(ctx)
+```
+
+### Streaming with QueryxIteratorFunc
+
+For large result sets that shouldn't be loaded into memory at once:
+
+```go
+listIter := dbx.NewQueryxIteratorFunc[Record](db, "SELECT * FROM foo ORDER BY ts ASC")
+
+ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+defer cancel()
+
+for rec, err := range listIter(ctx) {
+    // context cancellation terminates the loop with an error
+    if err != nil {
+        break
+    }
+    fmt.Println(rec)
+}
+```
+
+### Result type
+
+`NamedExecFunc` returns `dbx.Result` which wraps `sql.Result`:
+
+```go
+res, err := ops.Add(ctx, record)
+if id, ok := res.LastInsertID(); ok { ... }
+if n, ok := res.RowsAffected(); ok { ... }
+```
+
+## Pagination
+
+Cursor-based pagination via `PaginatedSelectFunc[T]`.
+
+### Setup
+
+```go
+list := dbx.NewPaginatedSelectFunc[Record](
+    db,
+    "foo",                                              // table name
+    "ts",                                               // ORDER BY column (used as cursor)
+    "",                                                 // base WHERE clause ("" for none)
+    func(r Record) string { return strconv.FormatInt(r.TS, 10) }, // cursor extractor
+)
+```
+
+With a WHERE clause:
+
+```go
+list := dbx.NewPaginatedSelectFunc[Record](
+    db, "foo", "ts", "WHERE name = ?",
+    func(r Record) string { return strconv.FormatInt(r.TS, 10) },
+)
+
+// Pass WHERE args after PageRequest
+rows, page, err := list(ctx, dbx.PageRequest{PageSize: 10}, "alice")
+```
+
+### Fetching pages
+
+```go
+// All rows (no pagination)
+rows, page, err := list(ctx, dbx.PageRequest{})
+
+// First page
+rows, page, err := list(ctx, dbx.PageRequest{PageSize: 10})
+
+// Next page (forward)
+rows, page, err := list(ctx, dbx.PageRequest{PageSize: 10, After: page.LastCursor})
+
+// Previous page (backward)
+rows, page, err := list(ctx, dbx.PageRequest{PageSize: 10, Before: page.FirstCursor})
+```
+
+### PageRequest / PageResponse
+
+```go
+type PageRequest struct {
+    PageSize int    // 0 = unlimited, clamped to MaxPageSize (1000)
+    After    string // forward cursor (mutually exclusive with Before)
+    Before   string // backward cursor (mutually exclusive with After)
+}
+
+type PageResponse struct {
+    HasMore     bool   // true if more pages exist
+    FirstCursor string // cursor of first item in page
+    LastCursor  string // cursor of last item in page
+}
+```
+
+- `After` and `Before` are mutually exclusive (setting both returns an error)
+- `PageSize` > `MaxPageSize` (1000) is silently clamped
+- Backward pagination (`Before`) returns results in ascending order
+- Table and column names are validated as safe SQL identifiers (panics at init on invalid input)
+
+### Full pagination loop
+
+```go
+var allRows []Record
+req := dbx.PageRequest{PageSize: 20}
+
+for {
+    rows, page, err := list(ctx, req)
+    if err != nil { return err }
+
+    allRows = append(allRows, rows...)
+
+    if !page.HasMore {
+        break
+    }
+    req.After = page.LastCursor
+}
+```
+
+## Breaking changes in v1.0.0
+
+### `WithPragmas` now takes variadic arguments
+
+The signature changed from `WithPragmas([]string{...})` to `WithPragmas(...)`.
+
+Before:
 
 ```go
 dbx.WithPragmas([]string{
     "PRAGMA foreign_keys = ON",
     "PRAGMA synchronous = NORMAL",
-    "PRAGMA secure_delete = OFF",
-    "PRAGMA synchronous = NORMAL",
-    "PRAGMA temp_store = MEMORY",
-  }),
+})
 ```
 
-### Migration database drivers
-
-The migration library I use ([github.com/golang-migrate/migrate](github.com/golang-migrate/migrate)) has support for a bunch of databases. We include a small set of drivers per default in the library purely as a convenience. But this does mean that we add dependencies you may not need.
-
-Since I'm the only user of this code for now I can live with that.
-
-If you want to use drivers that are not yet included here you can add those useing the `WithMigrationDriver` config option.  For instance if you want to add MySQL support:
+After:
 
 ```go
-import (
-  mysql "github.com/golang-migrate/migrate/v4/database/mysql"
+dbx.WithPragmas(
+    "PRAGMA foreign_keys = ON",
+    "PRAGMA synchronous = NORMAL",
 )
 ```
 
-and then you add the driver explicitly with
+### `ValidSQLIdentifier` rejects identifiers starting with a digit
 
-```go
-dbx.WithMigrationDriver("mysql", "mysql",
-   func(db *sql.DB) (database.Driver, error) {
-      return mysql.WithInstance(db, &mysql.Config{})
-   }),
-```
-
-## Prepared statements
-
-This library includes a mechanism for dealing with prepared statements that makes life a bit easier.  It uses generics and a set of function types that you can use for prepared statements.
-
-Here is an excerpt of the types from `prepared.go`.
-
-```go
-
-// ExecFunc is useful for very simple operations like DELETE with positional arguments.
-type ExecFunc func(ctx context.Context, args ...any) error
-
-// NamedExecFunc is useful for create, update etc where you send an entity in and
-// just want a Result and error back.
-type NamedExecFunc[T any] func(ctx context.Context, entity T) (Result, error)
-
-// QueryRowxFunc is useful for queries that return one row and takes positional
-// arguments.  For instance get operations on a single row.
-type QueryRowxFunc[T any] func(ctx context.Context, args ...any) (T, error)
-
-// EntityQueryRowxFunc is useful for queries that take some entity and return
-// an entity of the same type.  For instance when using RETURNING in SQL
-// statement.
-type EntityQueryRowxFunc[T any] func(ctx context.Context, entity T) (T, error)
-
-// SelectFunc is useful for when you perform selects and you know the result set will
-// be small or at least bounded to acceptable size.
-type SelectFunc[T any] func(ctx context.Context, args ...any) ([]T, error)
-
-// QueryxIteratorFunc is useful for queries that return (poitentially) large
-// result sets and you want to be able to stream the result.
-type QueryxIteratorFunc[T any] func(ctx context.Context, args ...any) func(func(T, error) bool)
-```
-
-You can instantiate these with:
-
-```go
-
-// NewExecFunc creates an ExecFunc
-func NewExecFunc(db *sqlx.DB, stmt string) ExecFunc
-
-// NewNamedExecFunc creates a new NamedExecFunc
-func NewNamedExecFunc[T any](db *sqlx.DB, stmt string) NamedExecFunc[T]
-
-// NewQueryRowxFunc creates a new QueryRowxFunc
-func NewQueryRowxFunc[T any](db *sqlx.DB, stmt string) QueryRowxFunc[T]
-
-// NewEntityQueryRowxFunc creates a new EntityQueryRowxFunc
-func NewEntityQueryRowxFunc[T any](db *sqlx.DB, stmt string) 
-
-// NewSelectFunc creates a new SelectFunc
-func NewSelectFunc[T any](db *sqlx.DB, stmt string) SelectFunc[T]
-
-// NewQueryxIteratorFunc creates a new QueryxIteratorFunc
-func NewQueryxIteratorFunc[T any](db *sqlx.DB, stmt string) QueryxIteratorFunc
-```
-
-You can look at the [unit test](dbxtest/prepared_test.go) for prepared statements to see an example of how you can make structs that hold the functions that define your interface.
-
-### QueryxIteratorFunc
-
-This type is particularly useful because it allows you to write very simple loops around queries that return possibly huge result sets.
-
-Assume you have a struct with pointers to your database operations
-
-```go
-type Record struct {
-   // some record structure representing the fields in a table
-}
-
-type Storage struct {
-   List dbx.QueryxIteratorFunc[Record]
-}
-```
-
-Here's how you would instantiate the storage:
-
-```go
-operations := Storage{
-   List: dbx.NewQueryxIteratorFunc[record](db, "SELECT * FROM foo"),
-}
-```
-
-```go
-  // perhaps add a timeout
-  ctx, cancel := context.WithTimeout(someCTX, 10*time.Millisecond)
-  defer cancel()
-
-  for record, err := range operations.ListRecords(ctx) {
-    // check err and do something with record
-  }
-```
-
-If `someCTX` comes from a HTTP call or a gRPC call, it will terminate the loop and return an error value if the context is cancelled.  This makes it easier to handle those queries that return a lot of rows without first slurping everything into memory before returning, but just stream entries as they are returned by the iterator.
+`ValidSQLIdentifier("123table")` now returns `false`. This aligns with standard SQL identifier rules. Table and column names passed to `NewPaginatedSelectFunc` must not start with a digit.

@@ -21,15 +21,7 @@ var (
 
 // OpenSQLX is a wrapper for Open that returns an *sqlx.DB rather than sql.DB
 func OpenSQLX(opts ...Option) (*sqlx.DB, error) {
-	// this is a bit suboptimal, but we need to do it to get the driverName
-	config := defaultConfig()
-	for _, opt := range opts {
-		if err := opt(&config); err != nil {
-			return nil, err
-		}
-	}
-
-	db, err := Open(opts...)
+	config, db, err := open(opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -38,47 +30,55 @@ func OpenSQLX(opts ...Option) (*sqlx.DB, error) {
 
 // Open is a helper for opening a database and possibly applying pragmas, migrations etc.
 func Open(opts ...Option) (*sql.DB, error) {
-	config := defaultConfig()
+	_, db, err := open(opts...)
+	return db, err
+}
+
+// open is the shared implementation for Open and OpenSQLX. It returns the
+// resolved config alongside the opened database so that OpenSQLX can read
+// the driver name without evaluating options twice.
+func open(opts ...Option) (cfg config, _ *sql.DB, _ error) {
+	cfg = defaultConfig()
 
 	for _, opt := range opts {
-		if err := opt(&config); err != nil {
-			return nil, err
+		if err := opt(&cfg); err != nil {
+			return cfg, nil, err
 		}
 	}
 
-	if config.dsn == "" {
-		return nil, ErrNoDSN
+	if cfg.dsn == "" {
+		return cfg, nil, ErrNoDSN
 	}
 
-	db, err := sql.Open(config.driverName, config.dsn)
+	db, err := sql.Open(cfg.driverName, cfg.dsn)
 	if err != nil {
-		return nil, err
+		return cfg, nil, err
 	}
 
-	for _, p := range config.pragmas {
+	for _, p := range cfg.pragmas {
 		if _, err := db.Exec(p); err != nil {
 			_ = db.Close()
-			return nil, fmt.Errorf("pragma %q: %w", p, err)
+			return cfg, nil, fmt.Errorf("pragma %q: %w", p, err)
 		}
 	}
 
-	if config.migrations != nil {
-		ver, dirty, err := upMigrations(db, config)
+	if cfg.migrations != nil {
+		ver, dirty, err := upMigrations(db, cfg)
 		if err != nil {
 			_ = db.Close()
 			if errors.Is(err, os.ErrNotExist) {
-				return nil, ErrDatabaseTooNew
+				return cfg, nil, ErrDatabaseTooNew
 			}
-			return nil, fmt.Errorf("running migrations: %w", err)
+			return cfg, nil, fmt.Errorf("running migrations: %w", err)
 		}
 
 		if dirty {
 			_ = db.Close()
-			return nil, errors.New("database is in a dirty migration state; fix or force version before continuing")
+			return cfg, nil, errors.New("database is in a dirty migration state; fix or force version before continuing")
 		}
 		slog.Info("database migration", "version", ver)
 	}
-	return db, err
+	return cfg, db, nil
 }
 
 // upMigrations applies any up migrations that need to be performed

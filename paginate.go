@@ -18,14 +18,18 @@ const MaxPageSize = 1000
 // After and Before are mutually exclusive: setting both is an error.
 // After requests results after the given cursor (forward pagination),
 // while Before requests results before the given cursor (backward pagination).
+//
+// Note: After and Before are only applied when PageSize > 0 (i.e. when
+// IsPaginated returns true). Setting a cursor without a page size will
+// return all rows and silently ignore the cursor value.
 type PageRequest struct {
 	// PageSize is the maximum number of rows to return. Zero means unlimited.
 	PageSize int
 	// After is the cursor for forward pagination (exclusive lower bound).
-	// Mutually exclusive with Before.
+	// Mutually exclusive with Before. Only applied when PageSize > 0.
 	After string
 	// Before is the cursor for backward pagination (exclusive upper bound).
-	// Mutually exclusive with After.
+	// Mutually exclusive with After. Only applied when PageSize > 0.
 	Before string
 }
 
@@ -45,13 +49,17 @@ type PageResponse struct {
 }
 
 // ValidSQLIdentifier reports whether s is safe to interpolate as a SQL
-// identifier. Only ASCII letters, digits, and underscores are allowed.
+// identifier. Only ASCII letters, digits, and underscores are allowed,
+// and the identifier must not start with a digit.
 func ValidSQLIdentifier(s string) bool {
 	if s == "" {
 		return false
 	}
-	for _, c := range s {
+	for i, c := range s {
 		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
+			return false
+		}
+		if i == 0 && c >= '0' && c <= '9' {
 			return false
 		}
 	}
@@ -121,6 +129,8 @@ func NewPaginatedSelectFunc[T any](db *sqlx.DB, table, orderCol, baseWhere strin
 		if page.IsPaginated() {
 			query += fmt.Sprintf(" LIMIT %d", page.PageSize+1)
 		}
+
+		query = db.Rebind(query)
 
 		var rows []T
 		if err := db.SelectContext(ctx, &rows, query, queryArgs...); err != nil {

@@ -28,7 +28,7 @@ type EntityQueryRowxFunc[T any] func(ctx context.Context, entity T) (T, error)
 // be small or at least bounded to acceptable size.
 type SelectFunc[T any] func(ctx context.Context, args ...any) ([]T, error)
 
-// QueryxIteratorFunc is useful for queries that return (poitentially) large
+// QueryxIteratorFunc is useful for queries that return (potentially) large
 // result sets and you want to be able to stream the result.
 type QueryxIteratorFunc[T any] func(ctx context.Context, args ...any) func(func(T, error) bool)
 
@@ -42,7 +42,7 @@ func NewExecFunc(db *sqlx.DB, stmt string) ExecFunc {
 	return func(ctx context.Context, args ...any) error {
 		res, err := prepared.ExecContext(ctx, args...)
 		if err != nil {
-			return err
+			return fmt.Errorf("statement [%s]: %w", stmt, err)
 		}
 
 		result := NewResult(res)
