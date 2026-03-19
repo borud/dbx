@@ -1,8 +1,7 @@
-package dbxtest
+package dbx_test
 
 import (
 	"database/sql"
-	"embed"
 	"os"
 	"testing"
 
@@ -16,9 +15,6 @@ import (
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite" // use the modernc SQLite library
 )
-
-//go:embed testmigrations/*.sql
-var migrationsFS embed.FS
 
 // TestOpenFSMigrations tests both some pragmas and adds embedded FS migration.
 func TestOpenFSMigrations(t *testing.T) {

@@ -1,4 +1,4 @@
-package dbxtest
+package dbx_test
 
 import (
 	"context"
