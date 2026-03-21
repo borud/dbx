@@ -161,6 +161,14 @@ func NewQueryxIteratorFunc[T any](db *sqlx.DB, stmt string) QueryxIteratorFunc[T
 			defer rows.Close()
 
 			for rows.Next() {
+				// Check for context cancellation between rows so
+				// that iteration stops promptly regardless of
+				// driver buffering behavior.
+				if err := ctx.Err(); err != nil {
+					_ = yield(*new(T), err)
+					return
+				}
+
 				var entity T
 				if err := rows.StructScan(&entity); err != nil {
 					_ = yield(*new(T), err)

@@ -83,6 +83,8 @@ type PaginatedSelectFunc[T any] func(ctx context.Context, page PageRequest, args
 //
 // baseWhere is an optional WHERE clause including the WHERE keyword
 // (e.g. "WHERE tenant_id = ?"). Pass "" to select all rows.
+// baseWhere is interpolated directly into the query; it must be a
+// trusted string — never pass user-controlled input.
 //
 // cursorFn extracts a cursor string from a result row for populating
 // PageResponse.FirstCursor and LastCursor.

@@ -24,7 +24,12 @@
 //
 // The package provides generic function types that wrap prepared
 // statements. Constructors panic on invalid SQL so that wiring errors
-// are caught at init time rather than at runtime:
+// are caught at init time rather than at runtime.
+//
+// The underlying prepared statements are captured in closures and
+// cannot be closed individually — they are released when the database
+// connection is closed. This is by design for the recommended
+// init-time wiring pattern:
 //
 //   - [NewExecFunc] — simple operations (DELETE, etc.) with positional args
 //   - [NewNamedExecFunc] — INSERT/UPDATE with a struct, returns [Result]
@@ -33,6 +38,33 @@
 //   - [NewSelectFunc] — bounded result sets
 //   - [NewQueryxIteratorFunc] — streaming large result sets via range iterator
 //   - [NewPaginatedSelectFunc] — cursor-based paginated SELECT (see Pagination)
+//
+// # Transactions
+//
+// The Tx* function types mirror the prepared-statement types above but
+// execute against a [*sqlx.Tx] instead of [*sqlx.DB]. Because the
+// transaction does not exist at construction time, these functions are
+// not pre-prepared — the SQL string is executed directly on each call.
+//
+// [RunTx] handles the begin/commit/rollback boilerplate:
+//
+//	addTx := dbx.NewTxNamedExecFunc[Device]("INSERT INTO devices ... VALUES ...")
+//	pskTx := dbx.NewTxNamedExecFunc[PSK]("INSERT INTO psk ... VALUES ...")
+//
+//	err := dbx.RunTx(ctx, db, func(tx *sqlx.Tx) error {
+//	    if _, err := addTx(ctx, tx, device); err != nil {
+//	        return err
+//	    }
+//	    _, err := pskTx(ctx, tx, psk)
+//	    return err
+//	})
+//
+// Available Tx function types:
+//
+//   - [NewTxExecFunc] — positional-arg exec inside a transaction
+//   - [NewTxNamedExecFunc] — named exec (struct) inside a transaction
+//   - [NewTxQueryRowxFunc] — single-row query inside a transaction
+//   - [NewTxEntityQueryRowxFunc] — struct in, struct out inside a transaction
 //
 // # Pagination
 //

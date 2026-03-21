@@ -12,6 +12,10 @@ Convenience layer on top of [sqlx](https://github.com/jmoiron/sqlx). No ORM — 
   - [Example: CRUD operations](#example-crud-operations)
   - [Streaming with QueryxIteratorFunc](#streaming-with-queryxiteratorfunc)
   - [Result type](#result-type)
+- [Transactions](#transactions)
+  - [RunTx helper](#runtx-helper)
+  - [Transaction function types](#transaction-function-types)
+  - [Example: atomic multi-table insert](#example-atomic-multi-table-insert)
 - [Pagination](#pagination)
   - [Setup](#setup)
   - [Fetching pages](#fetching-pages)
@@ -175,6 +179,70 @@ for rec, err := range listIter(ctx) {
 res, err := ops.Add(ctx, record)
 if id, ok := res.LastInsertID(); ok { ... }
 if n, ok := res.RowsAffected(); ok { ... }
+```
+
+## Transactions
+
+The prepared-statement functions above operate on `*sqlx.DB` directly. When you need multiple operations to succeed or fail atomically, use the transaction variants.
+
+### RunTx helper
+
+`RunTx` handles begin, commit, and rollback. If the callback returns an error (or panics), the transaction is rolled back; otherwise it is committed.
+
+```go
+err := dbx.RunTx(ctx, db, func(tx *sqlx.Tx) error {
+    // all operations here run in a single transaction
+    return nil
+})
+```
+
+### Transaction function types
+
+Each prepared-statement type has a `Tx` counterpart that takes a `*sqlx.Tx` instead of being bound to a `*sqlx.DB`. Since the transaction does not exist at construction time, these functions are not pre-prepared — the SQL is executed directly on each call.
+
+| Type                          | Mirrors                    | Constructor                     |
+|-------------------------------|----------------------------|---------------------------------|
+| `TxExecFunc`                  | `ExecFunc`                 | `NewTxExecFunc`                 |
+| `TxNamedExecFunc[T]`          | `NamedExecFunc[T]`         | `NewTxNamedExecFunc[T]`         |
+| `TxQueryRowxFunc[T]`          | `QueryRowxFunc[T]`         | `NewTxQueryRowxFunc[T]`         |
+| `TxEntityQueryRowxFunc[T]`    | `EntityQueryRowxFunc[T]`   | `NewTxEntityQueryRowxFunc[T]`   |
+
+### Example: atomic multi-table insert
+
+A common pattern is inserting related rows across tables atomically. The Tx function types can be wired up alongside their non-transactional counterparts:
+
+```go
+type DeviceStore struct {
+    Add    dbx.NamedExecFunc[Device]        // normal, non-tx insert
+    AddTx  dbx.TxNamedExecFunc[Device]      // same SQL, but for use in transactions
+    Get    dbx.QueryRowxFunc[Device]
+    GetTx  dbx.TxQueryRowxFunc[Device]
+}
+
+type PSKStore struct {
+    AddTx dbx.TxNamedExecFunc[PSK]
+}
+
+// Wire up (typically at init time)
+devices := DeviceStore{
+    Add:   dbx.NewNamedExecFunc[Device](db, "INSERT INTO devices (id,name) VALUES(:id,:name)"),
+    AddTx: dbx.NewTxNamedExecFunc[Device]("INSERT INTO devices (id,name) VALUES(:id,:name)"),
+    Get:   dbx.NewQueryRowxFunc[Device](db, "SELECT * FROM devices WHERE id = ?"),
+    GetTx: dbx.NewTxQueryRowxFunc[Device]("SELECT * FROM devices WHERE id = ?"),
+}
+
+psks := PSKStore{
+    AddTx: dbx.NewTxNamedExecFunc[PSK]("INSERT INTO psk (identity,device_id,key) VALUES(:identity,:device_id,:key)"),
+}
+
+// Atomic insert: device + initial PSK
+err := dbx.RunTx(ctx, db, func(tx *sqlx.Tx) error {
+    if _, err := devices.AddTx(ctx, tx, device); err != nil {
+        return err
+    }
+    _, err := psks.AddTx(ctx, tx, psk)
+    return err
+})
 ```
 
 ## Pagination
