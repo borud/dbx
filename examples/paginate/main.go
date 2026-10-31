@@ -8,7 +8,7 @@ import (
 	"log"
 	"strconv"
 
-	"github.com/borud/dbx"
+	"github.com/borud/dbx/v2"
 	_ "modernc.org/sqlite"
 )
 

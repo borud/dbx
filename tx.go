@@ -33,12 +33,18 @@ func RunTx(ctx context.Context, db *sqlx.DB, fn func(tx *sqlx.Tx) error) error {
 // transaction. It mirrors [ExecFunc] but operates on a [*sqlx.Tx].
 type TxExecFunc func(ctx context.Context, tx *sqlx.Tx, args ...any) error
 
-// NewTxExecFunc creates a TxExecFunc for the given SQL statement.
-// Unlike [NewExecFunc] the statement is not prepared at construction
-// time since the transaction does not exist yet.
-func NewTxExecFunc(stmt string) TxExecFunc {
+// NewTxExecFunc creates a TxExecFunc. The statement is prepared on db at
+// construction time and bound to the transaction on each call, so it is
+// parsed once. Construct it outside any transaction: on a database with a
+// single connection, preparing inside one would wait forever.
+func NewTxExecFunc(db *sqlx.DB, stmt string) TxExecFunc {
+	prepared, err := db.Preparex(stmt)
+	if err != nil {
+		panic(err)
+	}
+
 	return func(ctx context.Context, tx *sqlx.Tx, args ...any) error {
-		res, err := tx.ExecContext(ctx, stmt, args...)
+		res, err := tx.StmtxContext(ctx, prepared).ExecContext(ctx, args...)
 		if err != nil {
 			return fmt.Errorf("statement [%s]: %w", stmt, err)
 		}
@@ -56,10 +62,16 @@ func NewTxExecFunc(stmt string) TxExecFunc {
 // It mirrors [NamedExecFunc] but operates on a [*sqlx.Tx].
 type TxNamedExecFunc[T any] func(ctx context.Context, tx *sqlx.Tx, entity T) (Result, error)
 
-// NewTxNamedExecFunc creates a TxNamedExecFunc for the given SQL statement.
-func NewTxNamedExecFunc[T any](stmt string) TxNamedExecFunc[T] {
+// NewTxNamedExecFunc creates a TxNamedExecFunc. The statement is prepared on
+// db at construction time, see [NewTxExecFunc].
+func NewTxNamedExecFunc[T any](db *sqlx.DB, stmt string) TxNamedExecFunc[T] {
+	prepared, err := db.PrepareNamed(stmt)
+	if err != nil {
+		panic(err)
+	}
+
 	return func(ctx context.Context, tx *sqlx.Tx, entity T) (Result, error) {
-		res, err := tx.NamedExecContext(ctx, stmt, entity)
+		res, err := tx.NamedStmtContext(ctx, prepared).ExecContext(ctx, entity)
 		if err != nil {
 			return Result{}, fmt.Errorf("statement [%s]: %w", stmt, err)
 		}
@@ -73,12 +85,18 @@ func NewTxNamedExecFunc[T any](stmt string) TxNamedExecFunc[T] {
 // [*sqlx.Tx].
 type TxQueryRowxFunc[T any] func(ctx context.Context, tx *sqlx.Tx, args ...any) (T, error)
 
-// NewTxQueryRowxFunc creates a TxQueryRowxFunc for the given SQL statement.
-func NewTxQueryRowxFunc[T any](stmt string) TxQueryRowxFunc[T] {
+// NewTxQueryRowxFunc creates a TxQueryRowxFunc. The statement is prepared on
+// db at construction time, see [NewTxExecFunc].
+func NewTxQueryRowxFunc[T any](db *sqlx.DB, stmt string) TxQueryRowxFunc[T] {
 	var zero T
 
+	prepared, err := db.Preparex(stmt)
+	if err != nil {
+		panic(err)
+	}
+
 	return func(ctx context.Context, tx *sqlx.Tx, args ...any) (T, error) {
-		row := tx.QueryRowxContext(ctx, stmt, args...)
+		row := tx.StmtxContext(ctx, prepared).QueryRowxContext(ctx, args...)
 		if row.Err() != nil {
 			return zero, fmt.Errorf("statement [%s]: %w", stmt, row.Err())
 		}
@@ -97,27 +115,22 @@ func NewTxQueryRowxFunc[T any](stmt string) TxQueryRowxFunc[T] {
 // mirrors [EntityQueryRowxFunc] but operates on a [*sqlx.Tx].
 type TxEntityQueryRowxFunc[T any] func(ctx context.Context, tx *sqlx.Tx, entity T) (T, error)
 
-// NewTxEntityQueryRowxFunc creates a TxEntityQueryRowxFunc for the given SQL statement.
-func NewTxEntityQueryRowxFunc[T any](stmt string) TxEntityQueryRowxFunc[T] {
+// NewTxEntityQueryRowxFunc creates a TxEntityQueryRowxFunc. The statement is
+// prepared on db at construction time, see [NewTxExecFunc]. A query that
+// yields no rows returns an error wrapping [sql.ErrNoRows].
+func NewTxEntityQueryRowxFunc[T any](db *sqlx.DB, stmt string) TxEntityQueryRowxFunc[T] {
 	var zero T
 
+	prepared, err := db.PrepareNamed(stmt)
+	if err != nil {
+		panic(err)
+	}
+
 	return func(ctx context.Context, tx *sqlx.Tx, entity T) (T, error) {
-		row, err := sqlx.NamedQueryContext(ctx, tx, stmt, entity)
+		var result T
+		err := tx.NamedStmtContext(ctx, prepared).QueryRowxContext(ctx, entity).StructScan(&result)
 		if err != nil {
 			return zero, fmt.Errorf("statement [%s]: %w", stmt, err)
-		}
-		defer row.Close()
-
-		if !row.Next() {
-			if err := row.Err(); err != nil {
-				return zero, fmt.Errorf("statement [%s]: %w", stmt, err)
-			}
-			return zero, fmt.Errorf("statement [%s]: %w", stmt, sql.ErrNoRows)
-		}
-
-		var result T
-		if err := row.StructScan(&result); err != nil {
-			return zero, fmt.Errorf("failed StructScan [%s]: %w", stmt, err)
 		}
 
 		return result, nil

@@ -42,14 +42,16 @@
 // # Transactions
 //
 // The Tx* function types mirror the prepared-statement types above but
-// execute against a [*sqlx.Tx] instead of [*sqlx.DB]. Because the
-// transaction does not exist at construction time, these functions are
-// not pre-prepared — the SQL string is executed directly on each call.
+// execute against a [*sqlx.Tx] instead of [*sqlx.DB]. They are prepared on
+// the [*sqlx.DB] at construction time and bound to the transaction on each
+// call, so the SQL is parsed once. Construct them outside any transaction
+// (typically in a newXStmts constructor): on a database with a single
+// connection, preparing while a transaction holds it would wait forever.
 //
 // [RunTx] handles the begin/commit/rollback boilerplate:
 //
-//	addTx := dbx.NewTxNamedExecFunc[Device]("INSERT INTO devices ... VALUES ...")
-//	pskTx := dbx.NewTxNamedExecFunc[PSK]("INSERT INTO psk ... VALUES ...")
+//	addTx := dbx.NewTxNamedExecFunc[Device](db, "INSERT INTO devices ... VALUES ...")
+//	pskTx := dbx.NewTxNamedExecFunc[PSK](db, "INSERT INTO psk ... VALUES ...")
 //
 //	err := dbx.RunTx(ctx, db, func(tx *sqlx.Tx) error {
 //	    if _, err := addTx(ctx, tx, device); err != nil {
@@ -65,6 +67,26 @@
 //   - [NewTxNamedExecFunc] — named exec (struct) inside a transaction
 //   - [NewTxQueryRowxFunc] — single-row query inside a transaction
 //   - [NewTxEntityQueryRowxFunc] — struct in, struct out inside a transaction
+//   - [NewTxBatchExecFunc] — multi-row statement for a slice of structs
+//
+// # Batch inserts
+//
+// [NewTxBatchExecFunc] inserts many rows with few statements. It takes the
+// statement head and a named template for one row, prepares statements for
+// 1 to maxRows rows, and binds struct fields by their db tags:
+//
+//	insert := dbx.NewTxBatchExecFunc[Event](db,
+//	    "INSERT INTO events (time, path) VALUES ", "(:time, :path)", 8)
+//
+//	err := dbx.RunTx(ctx, db, func(tx *sqlx.Tx) error {
+//	    _, err := insert(ctx, tx, events)
+//	    return err
+//	})
+//
+// Each statement costs the driver a fixed amount of work (with a cancellable
+// context, modernc.org/sqlite starts a goroutine per statement), so batching
+// is much faster than one statement per row. Keep maxRows small: some
+// drivers bind parameters in time quadratic in their number.
 //
 // # Pagination
 //

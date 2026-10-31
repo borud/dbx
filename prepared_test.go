@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/borud/dbx"
+	"github.com/borud/dbx/v2"
 	"github.com/golang-migrate/migrate/v4/database"
 	"github.com/golang-migrate/migrate/v4/database/sqlite3"
 	"github.com/stretchr/testify/require"

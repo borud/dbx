@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/borud/dbx"
+	"github.com/borud/dbx/v2"
 	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/require"
 )
@@ -26,7 +26,7 @@ func openTestDB(t *testing.T) *sqlx.DB {
 func TestRunTx_Commit(t *testing.T) {
 	db := openTestDB(t)
 
-	addTx := dbx.NewTxNamedExecFunc[record]("INSERT INTO foo (name,ts) VALUES(:name,:ts)")
+	addTx := dbx.NewTxNamedExecFunc[record](db, "INSERT INTO foo (name,ts) VALUES(:name,:ts)")
 	get := dbx.NewQueryRowxFunc[record](db, "SELECT * FROM foo WHERE name = ?")
 
 	err := dbx.RunTx(context.Background(), db, func(tx *sqlx.Tx) error {
@@ -44,7 +44,7 @@ func TestRunTx_Commit(t *testing.T) {
 func TestRunTx_Rollback(t *testing.T) {
 	db := openTestDB(t)
 
-	addTx := dbx.NewTxNamedExecFunc[record]("INSERT INTO foo (name,ts) VALUES(:name,:ts)")
+	addTx := dbx.NewTxNamedExecFunc[record](db, "INSERT INTO foo (name,ts) VALUES(:name,:ts)")
 	get := dbx.NewQueryRowxFunc[record](db, "SELECT * FROM foo WHERE name = ?")
 
 	err := dbx.RunTx(context.Background(), db, func(tx *sqlx.Tx) error {
@@ -64,7 +64,7 @@ func TestTxExecFunc(t *testing.T) {
 	db := openTestDB(t)
 
 	add := dbx.NewNamedExecFunc[record](db, "INSERT INTO foo (name,ts) VALUES(:name,:ts)")
-	delTx := dbx.NewTxExecFunc("DELETE FROM foo WHERE name = ?")
+	delTx := dbx.NewTxExecFunc(db, "DELETE FROM foo WHERE name = ?")
 	get := dbx.NewQueryRowxFunc[record](db, "SELECT * FROM foo WHERE name = ?")
 
 	_, err := add(context.Background(), record{Name: "to-delete", TS: 1})
@@ -83,7 +83,7 @@ func TestTxQueryRowxFunc(t *testing.T) {
 	db := openTestDB(t)
 
 	add := dbx.NewNamedExecFunc[record](db, "INSERT INTO foo (name,ts) VALUES(:name,:ts)")
-	getTx := dbx.NewTxQueryRowxFunc[record]("SELECT * FROM foo WHERE name = ?")
+	getTx := dbx.NewTxQueryRowxFunc[record](db, "SELECT * FROM foo WHERE name = ?")
 
 	_, err := add(context.Background(), record{Name: "query-test", TS: 99})
 	require.NoError(t, err)
@@ -102,8 +102,8 @@ func TestTxQueryRowxFunc(t *testing.T) {
 func TestTxMultipleOps(t *testing.T) {
 	db := openTestDB(t)
 
-	addTx := dbx.NewTxNamedExecFunc[record]("INSERT INTO foo (name,ts) VALUES(:name,:ts)")
-	getTx := dbx.NewTxQueryRowxFunc[record]("SELECT * FROM foo WHERE name = ?")
+	addTx := dbx.NewTxNamedExecFunc[record](db, "INSERT INTO foo (name,ts) VALUES(:name,:ts)")
+	getTx := dbx.NewTxQueryRowxFunc[record](db, "SELECT * FROM foo WHERE name = ?")
 	list := dbx.NewSelectFunc[record](db, "SELECT * FROM foo ORDER BY ts ASC")
 
 	now := time.Now().UnixNano()
@@ -135,7 +135,7 @@ func TestTxMultipleOps(t *testing.T) {
 func TestTxEntityQueryRowxFunc(t *testing.T) {
 	db := openTestDB(t)
 
-	addRetTx := dbx.NewTxEntityQueryRowxFunc[record]("INSERT INTO foo (name,ts) VALUES(:name,:ts) RETURNING *")
+	addRetTx := dbx.NewTxEntityQueryRowxFunc[record](db, "INSERT INTO foo (name,ts) VALUES(:name,:ts) RETURNING *")
 
 	var got record
 	err := dbx.RunTx(context.Background(), db, func(tx *sqlx.Tx) error {

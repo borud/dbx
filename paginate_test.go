@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/borud/dbx"
+	"github.com/borud/dbx/v2"
 	"github.com/stretchr/testify/require"
 )
 

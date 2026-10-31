@@ -1,6 +1,6 @@
 # DBX - Opinionated database utilities for Go
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/borud/dbx.svg)](https://pkg.go.dev/github.com/borud/dbx)
+[![Go Reference](https://pkg.go.dev/badge/github.com/borud/dbx/v2.svg)](https://pkg.go.dev/github.com/borud/dbx/v2)
 
 Convenience layer on top of [sqlx](https://github.com/jmoiron/sqlx). No ORM — just prepared statements, migrations, and pagination.
 
@@ -26,7 +26,7 @@ Convenience layer on top of [sqlx](https://github.com/jmoiron/sqlx). No ORM — 
 ## Opening a database
 
 ```go
-import "github.com/borud/dbx"
+import "github.com/borud/dbx/v2"
 
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
@@ -198,7 +198,7 @@ err := dbx.RunTx(ctx, db, func(tx *sqlx.Tx) error {
 
 ### Transaction function types
 
-Each prepared-statement type has a `Tx` counterpart that takes a `*sqlx.Tx` instead of being bound to a `*sqlx.DB`. Since the transaction does not exist at construction time, these functions are not pre-prepared — the SQL is executed directly on each call.
+Each prepared-statement type has a `Tx` counterpart that runs inside a `*sqlx.Tx`. The statement is prepared on the `*sqlx.DB` at construction time and bound to the transaction on each call, so it is parsed once. Construct these outside any transaction: on a database with a single connection (such as SQLite `:memory:`), preparing while a transaction holds the connection would wait forever.
 
 | Type                          | Mirrors                    | Constructor                     |
 |-------------------------------|----------------------------|---------------------------------|
@@ -206,6 +206,22 @@ Each prepared-statement type has a `Tx` counterpart that takes a `*sqlx.Tx` inst
 | `TxNamedExecFunc[T]`          | `NamedExecFunc[T]`         | `NewTxNamedExecFunc[T]`         |
 | `TxQueryRowxFunc[T]`          | `QueryRowxFunc[T]`         | `NewTxQueryRowxFunc[T]`         |
 | `TxEntityQueryRowxFunc[T]`    | `EntityQueryRowxFunc[T]`   | `NewTxEntityQueryRowxFunc[T]`   |
+| `TxBatchExecFunc[T]`          | (none)                     | `NewTxBatchExecFunc[T]`         |
+
+### Batch inserts
+
+`NewTxBatchExecFunc` inserts a slice of structs with multi-row statements, up to `maxRows` rows each, and returns one `Result` per statement. Statements for 1 to `maxRows` rows are prepared up front.
+
+```go
+insert := dbx.NewTxBatchExecFunc[Event](db, "INSERT INTO events (time, path) VALUES ", "(:time, :path)", 8)
+
+err := dbx.RunTx(ctx, db, func(tx *sqlx.Tx) error {
+    _, err := insert(ctx, tx, events)
+    return err
+})
+```
+
+Batching matters: each statement has a fixed cost in the driver (`modernc.org/sqlite` starts a goroutine per statement when the context can be cancelled), so inserting rows one statement at a time is several times slower. Keep `maxRows` small, since some drivers bind parameters in time quadratic in their number.
 
 ### Example: atomic multi-table insert
 
@@ -226,13 +242,13 @@ type PSKStore struct {
 // Wire up (typically at init time)
 devices := DeviceStore{
     Add:   dbx.NewNamedExecFunc[Device](db, "INSERT INTO devices (id,name) VALUES(:id,:name)"),
-    AddTx: dbx.NewTxNamedExecFunc[Device]("INSERT INTO devices (id,name) VALUES(:id,:name)"),
+    AddTx: dbx.NewTxNamedExecFunc[Device](db, "INSERT INTO devices (id,name) VALUES(:id,:name)"),
     Get:   dbx.NewQueryRowxFunc[Device](db, "SELECT * FROM devices WHERE id = ?"),
-    GetTx: dbx.NewTxQueryRowxFunc[Device]("SELECT * FROM devices WHERE id = ?"),
+    GetTx: dbx.NewTxQueryRowxFunc[Device](db, "SELECT * FROM devices WHERE id = ?"),
 }
 
 psks := PSKStore{
-    AddTx: dbx.NewTxNamedExecFunc[PSK]("INSERT INTO psk (identity,device_id,key) VALUES(:identity,:device_id,:key)"),
+    AddTx: dbx.NewTxNamedExecFunc[PSK](db, "INSERT INTO psk (identity,device_id,key) VALUES(:identity,:device_id,:key)"),
 }
 
 // Atomic insert: device + initial PSK
