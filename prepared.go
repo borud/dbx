@@ -9,6 +9,10 @@ import (
 )
 
 // ExecFunc is useful for very simple operations like DELETE with positional arguments.
+// It returns an error wrapping [sql.ErrNoRows] when the driver reports zero
+// rows affected, so it suits statements expected to change at least one row.
+// That includes DDL and updates that leave a row unchanged (on MySQL without
+// clientFoundRows); use [NamedExecFunc], which returns the [Result], for those.
 type ExecFunc func(ctx context.Context, args ...any) error
 
 // NamedExecFunc is useful for create, update etc where you send an entity in and
@@ -29,7 +33,8 @@ type EntityQueryRowxFunc[T any] func(ctx context.Context, entity T) (T, error)
 type SelectFunc[T any] func(ctx context.Context, args ...any) ([]T, error)
 
 // QueryxIteratorFunc is useful for queries that return (potentially) large
-// result sets and you want to be able to stream the result.
+// result sets and you want to be able to stream the result. The query runs
+// each time the returned iterator is ranged over.
 type QueryxIteratorFunc[T any] func(ctx context.Context, args ...any) func(func(T, error) bool)
 
 // NewExecFunc creates an ExecFunc
@@ -47,7 +52,7 @@ func NewExecFunc(db *sqlx.DB, stmt string) ExecFunc {
 
 		result := NewResult(res)
 		if rows, ok := result.RowsAffected(); ok && rows == 0 {
-			return sql.ErrNoRows
+			return fmt.Errorf("statement [%s]: no rows affected: %w", stmt, sql.ErrNoRows)
 		}
 
 		return nil
@@ -87,10 +92,8 @@ func NewQueryRowxFunc[T any](db *sqlx.DB, stmt string) QueryRowxFunc[T] {
 		}
 
 		var result T
-		err := row.StructScan(&result)
-
-		if err != nil {
-			return zero, fmt.Errorf("failed StructScan [%s]: %w", stmt, err)
+		if err := row.StructScan(&result); err != nil {
+			return zero, fmt.Errorf("statement [%s]: %w", stmt, err)
 		}
 
 		return result, nil
@@ -113,10 +116,8 @@ func NewEntityQueryRowxFunc[T any](db *sqlx.DB, stmt string) EntityQueryRowxFunc
 		}
 
 		var result T
-		err := row.StructScan(&result)
-
-		if err != nil {
-			return zero, fmt.Errorf("failed StructScan [%s]: %w", stmt, err)
+		if err := row.StructScan(&result); err != nil {
+			return zero, fmt.Errorf("statement [%s]: %w", stmt, err)
 		}
 
 		return result, nil
@@ -149,15 +150,14 @@ func NewQueryxIteratorFunc[T any](db *sqlx.DB, stmt string) QueryxIteratorFunc[T
 	}
 
 	return func(ctx context.Context, args ...any) func(func(T, error) bool) {
-		rows, err := prepared.QueryxContext(ctx, args...)
-
 		return func(yield func(T, error) bool) {
-			// Handle query error before iteration
+			// The query runs per range, not when the iterator is made, so
+			// an iterator that is never ranged holds no connection.
+			rows, err := prepared.QueryxContext(ctx, args...)
 			if err != nil {
 				_ = yield(*new(T), fmt.Errorf("statement [%s]: %w", stmt, err))
 				return
 			}
-
 			defer rows.Close()
 
 			for rows.Next() {
@@ -165,13 +165,13 @@ func NewQueryxIteratorFunc[T any](db *sqlx.DB, stmt string) QueryxIteratorFunc[T
 				// that iteration stops promptly regardless of
 				// driver buffering behavior.
 				if err := ctx.Err(); err != nil {
-					_ = yield(*new(T), err)
+					_ = yield(*new(T), fmt.Errorf("statement [%s]: %w", stmt, err))
 					return
 				}
 
 				var entity T
 				if err := rows.StructScan(&entity); err != nil {
-					_ = yield(*new(T), err)
+					_ = yield(*new(T), fmt.Errorf("statement [%s]: %w", stmt, err))
 					return
 				}
 
@@ -181,7 +181,7 @@ func NewQueryxIteratorFunc[T any](db *sqlx.DB, stmt string) QueryxIteratorFunc[T
 			}
 
 			if err := rows.Err(); err != nil {
-				_ = yield(*new(T), err)
+				_ = yield(*new(T), fmt.Errorf("statement [%s]: %w", stmt, err))
 			}
 		}
 	}

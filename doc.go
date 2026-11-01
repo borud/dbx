@@ -23,8 +23,10 @@
 // # Prepared statements
 //
 // The package provides generic function types that wrap prepared
-// statements. Constructors panic on invalid SQL so that wiring errors
-// are caught at init time rather than at runtime.
+// statements. Constructors prepare immediately and panic on invalid SQL so
+// that wiring errors are caught at init time rather than at runtime (with
+// modernc.org/sqlite this needs v1.53.0 or later, which compiles statements
+// in Prepare).
 //
 // The underlying prepared statements are captured in closures and
 // cannot be closed individually — they are released when the database
@@ -44,9 +46,15 @@
 // The Tx* function types mirror the prepared-statement types above but
 // execute against a [*sqlx.Tx] instead of [*sqlx.DB]. They are prepared on
 // the [*sqlx.DB] at construction time and bound to the transaction on each
-// call, so the SQL is parsed once. Construct them outside any transaction
-// (typically in a newXStmts constructor): on a database with a single
-// connection, preparing while a transaction holds it would wait forever.
+// call, so the SQL is parsed once per pooled connection. Construct them
+// outside any transaction (typically in a newXStmts constructor): on a
+// database limited to one connection, preparing while a transaction holds it
+// would wait forever. [Open] limits in-memory SQLite databases to one
+// connection, since each connection to one is a separate database.
+//
+// Each call binds the statement to the transaction, and database/sql keeps
+// that binding until the transaction ends, so keep transactions that make
+// very many calls short.
 //
 // [RunTx] handles the begin/commit/rollback boilerplate:
 //
@@ -72,11 +80,14 @@
 // # Batch inserts
 //
 // [NewTxBatchExecFunc] inserts many rows with few statements. It takes the
-// statement head and a named template for one row, prepares statements for
-// 1 to maxRows rows, and binds struct fields by their db tags:
+// statement head, a named template for one row and a tail, prepares
+// statements for 1 to maxRows rows, and binds struct fields by their db tags:
 //
 //	insert := dbx.NewTxBatchExecFunc[Event](db,
-//	    "INSERT INTO events (time, path) VALUES ", "(:time, :path)", 8)
+//	    "INSERT INTO events (time, path) VALUES ", "(:time, :path)",
+//	    " ON CONFLICT DO NOTHING", 8)
+//
+// Only the row template is parsed for names; head and tail are used verbatim.
 //
 //	err := dbx.RunTx(ctx, db, func(tx *sqlx.Tx) error {
 //	    _, err := insert(ctx, tx, events)
@@ -90,10 +101,11 @@
 //
 // # Pagination
 //
-// [NewPaginatedSelectFunc] builds cursor-based paginated SELECT queries.
-// Table and column names are validated as safe SQL identifiers at
-// construction time. Queries are rebound via sqlx.Rebind for
-// cross-database placeholder compatibility.
+// [NewPaginatedSelectFunc] builds cursor-based paginated SELECT queries,
+// ordered by a column plus a unique tie-breaker column so that equal values
+// are neither skipped nor repeated across pages. Table and column names are
+// validated as safe SQL identifiers, and the statements are prepared (and
+// rebound via sqlx.Rebind) at construction time. Cursors are opaque.
 //
 // # Breaking changes in v1.0.0
 //

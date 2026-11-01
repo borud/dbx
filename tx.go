@@ -30,7 +30,8 @@ func RunTx(ctx context.Context, db *sqlx.DB, fn func(tx *sqlx.Tx) error) error {
 }
 
 // TxExecFunc executes a statement with positional arguments inside a
-// transaction. It mirrors [ExecFunc] but operates on a [*sqlx.Tx].
+// transaction. It mirrors [ExecFunc], including its [sql.ErrNoRows] on zero
+// rows affected, but operates on a [*sqlx.Tx].
 type TxExecFunc func(ctx context.Context, tx *sqlx.Tx, args ...any) error
 
 // NewTxExecFunc creates a TxExecFunc. The statement is prepared on db at
@@ -51,7 +52,7 @@ func NewTxExecFunc(db *sqlx.DB, stmt string) TxExecFunc {
 
 		result := NewResult(res)
 		if rows, ok := result.RowsAffected(); ok && rows == 0 {
-			return sql.ErrNoRows
+			return fmt.Errorf("statement [%s]: no rows affected: %w", stmt, sql.ErrNoRows)
 		}
 
 		return nil
@@ -103,7 +104,7 @@ func NewTxQueryRowxFunc[T any](db *sqlx.DB, stmt string) TxQueryRowxFunc[T] {
 
 		var result T
 		if err := row.StructScan(&result); err != nil {
-			return zero, fmt.Errorf("failed StructScan [%s]: %w", stmt, err)
+			return zero, fmt.Errorf("statement [%s]: %w", stmt, err)
 		}
 
 		return result, nil

@@ -43,9 +43,10 @@ func main() {
 	}
 
 	// Create a paginated select function.
-	// Parameters: db, table, order column, optional WHERE clause, cursor extractor.
-	list := dbx.NewPaginatedSelectFunc(db, "events", "ts", "",
-		func(e event) string { return strconv.FormatInt(e.TS, 10) },
+	// Parameters: db, table, order column, unique tie-breaker column,
+	// optional WHERE condition, cursor extractor (order and key values).
+	list := dbx.NewPaginatedSelectFunc(db, "events", "ts", "id", "",
+		func(e event) (string, string) { return strconv.FormatInt(e.TS, 10), strconv.FormatInt(e.ID, 10) },
 	)
 
 	// Page through all results, 5 at a time.
@@ -72,8 +73,8 @@ func main() {
 
 	// Paginated select with a WHERE clause.
 	fmt.Println("\n--- filtered (ts < 500) ---")
-	filtered := dbx.NewPaginatedSelectFunc(db, "events", "ts", "WHERE ts < ?",
-		func(e event) string { return strconv.FormatInt(e.TS, 10) },
+	filtered := dbx.NewPaginatedSelectFunc(db, "events", "ts", "id", "ts < ?",
+		func(e event) (string, string) { return strconv.FormatInt(e.TS, 10), strconv.FormatInt(e.ID, 10) },
 	)
 
 	rows, pr, err := filtered(ctx, dbx.PageRequest{PageSize: 10}, 500)

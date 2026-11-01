@@ -4,11 +4,12 @@ import (
 	"database/sql"
 	"fmt"
 	"io/fs"
+	"log/slog"
 
 	"github.com/golang-migrate/migrate/v4/database"
 	"github.com/golang-migrate/migrate/v4/database/pgx/v5"
 	"github.com/golang-migrate/migrate/v4/database/postgres"
-	"github.com/golang-migrate/migrate/v4/database/sqlite3"
+	"github.com/golang-migrate/migrate/v4/database/sqlite"
 )
 
 // config is the configuration
@@ -19,6 +20,7 @@ type config struct {
 	migrations       fs.FS
 	migrationsPath   string
 	migrationDrivers map[string]DriverForFunc
+	logger           *slog.Logger
 }
 
 // Option is a configuration option callback type
@@ -34,14 +36,18 @@ func defaultConfig() config {
 		pragmas:        []string{},
 		migrations:     nil,
 		migrationsPath: "",
+		logger:         slog.Default(),
 		migrationDrivers: map[string]DriverForFunc{
+			// migrate's sqlite package is pure Go (modernc); its sqlite3
+			// package would pull in cgo through mattn/go-sqlite3. Both use
+			// the same schema_migrations table.
 			"sqlite": func(db *sql.DB) (database.Driver, string, error) {
-				d, err := sqlite3.WithInstance(db, &sqlite3.Config{})
-				return d, "sqlite3", err
+				d, err := sqlite.WithInstance(db, &sqlite.Config{})
+				return d, "sqlite", err
 			},
 			"sqlite3": func(db *sql.DB) (database.Driver, string, error) {
-				d, err := sqlite3.WithInstance(db, &sqlite3.Config{})
-				return d, "sqlite3", err
+				d, err := sqlite.WithInstance(db, &sqlite.Config{})
+				return d, "sqlite", err
 			},
 			"postgres": func(db *sql.DB) (database.Driver, string, error) {
 				d, err := postgres.WithInstance(db, &postgres.Config{})
@@ -75,12 +81,22 @@ func WithMigrationDriver(sqlDriverName string, migrateName string, create func(*
 	}
 }
 
-// WithPragmas appends pragmas to the config.
-// Pragmas are executed as raw SQL statements during database opening, so they
-// must be trusted inputs — never pass user-controlled strings.
+// WithPragmas appends pragmas to the config. Pragmas are executed as raw SQL
+// statements on every new connection in the pool, since many settings (such
+// as SQLite's foreign_keys) apply per connection. They must be trusted inputs
+// — never pass user-controlled strings.
 func WithPragmas(pragmas ...string) Option {
 	return func(c *config) error {
 		c.pragmas = append(c.pragmas, pragmas...)
+		return nil
+	}
+}
+
+// WithLogger sets the logger used while opening the database. It defaults
+// to [slog.Default].
+func WithLogger(logger *slog.Logger) Option {
+	return func(c *config) error {
+		c.logger = logger
 		return nil
 	}
 }
